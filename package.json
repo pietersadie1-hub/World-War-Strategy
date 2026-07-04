@@ -1,0 +1,14 @@
+{
+  "name": "world-war-strategy",
+  "version": "1.0.0",
+  "description": "Browser-based isometric RTS — HTML5 Canvas + vanilla JS. The multiplayer relay server is the only thing that needs Node.",
+  "main": "server/server.js",
+  "scripts": {
+    "start": "npx serve .",
+    "server": "node server/server.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "license": "MIT"
+}

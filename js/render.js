@@ -1,0 +1,654 @@
+/* ============ render.js — isometric world renderer ============
+   Terrain, roads, decor, buildings, units, projectiles, particles,
+   fog of war, day/night lighting and weather effects. */
+window.RTS = window.RTS || {};
+
+RTS.render = (function () {
+  'use strict';
+  const U = RTS.util, C = RTS.config, S = RTS.sprites, T = C.T;
+  const TW = C.TILE_W, TH = C.TILE_H, TW2 = TW / 2, TH2 = TH / 2;
+
+  let canvas, ctx, fxCanvas, fxCtx;
+  let vw = 0, vh = 0, dpr = 1;
+  const camera = { x: 12, y: 12, zoom: 1 };
+  let particles = [];
+  let rainDrops = [];
+  let shake = 0;
+
+  /* UI-driven overlays */
+  const overlay = {
+    ghost: null,           // {type, gx, gy, ok}
+    roadPath: null,        // [{x, y, cost}]
+    selection: [],         // entity refs
+    hoverEnt: null
+  };
+
+  let fogCanvas, fogCtx;   // 1px-per-tile fog layer, iso-transformed on draw
+
+  function init(c1, c2) {
+    canvas = c1; ctx = canvas.getContext('2d');
+    fxCanvas = c2; fxCtx = fxCanvas.getContext('2d');
+    resize();
+    window.addEventListener('resize', resize);
+  }
+
+  function resize() {
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    vw = window.innerWidth; vh = window.innerHeight;
+    canvas.width = vw * dpr; canvas.height = vh * dpr;
+    fxCanvas.width = vw * dpr; fxCanvas.height = vh * dpr;
+  }
+
+  /* ---------------- transforms ---------------- */
+  function worldToScreen(x, y) {
+    const z = camera.zoom;
+    return {
+      x: ((x - y) - (camera.x - camera.y)) * TW2 * z + vw / 2,
+      y: ((x + y) - (camera.x + camera.y)) * TH2 * z + vh / 2
+    };
+  }
+  function screenToWorld(sx, sy) {
+    const z = camera.zoom;
+    const ix = (sx - vw / 2) / (TW2 * z);
+    const iy = (sy - vh / 2) / (TH2 * z);
+    return {
+      x: (ix + iy) / 2 + camera.x,
+      y: (iy - ix) / 2 + camera.y
+    };
+  }
+  function centerOn(x, y) { camera.x = x; camera.y = y; }
+
+  function clampCamera(map) {
+    camera.x = U.clamp(camera.x, 2, map.w - 2);
+    camera.y = U.clamp(camera.y, 2, map.h - 2);
+    camera.zoom = U.clamp(camera.zoom, 0.45, 2.2);
+  }
+
+  /* ---------------- events -> effects ---------------- */
+  function onEvent(e) {
+    if (e.t === 'explosion') {
+      spawnExplosion(e.x, e.y, e.s || 1);
+      if (e.s > 1) shake = Math.min(10, shake + e.s * 3);
+    } else if (e.t === 'muzzle') {
+      particles.push({
+        type: 'flash', x: e.x, y: e.y, z: e.z || 0.4, vx: 0, vy: 0, vz: 0,
+        life: 0, ttl: 0.07, size: e.kind === 'shell' ? 8 : 5
+      });
+    } else if (e.t === 'hit') {
+      for (let k = 0; k < 4; k++) {
+        particles.push({
+          type: 'spark', x: e.x, y: e.y, z: 0.4,
+          vx: (Math.random() - 0.5) * 3, vy: (Math.random() - 0.5) * 3, vz: Math.random() * 2.5,
+          life: 0, ttl: 0.3 + Math.random() * 0.2, size: 2
+        });
+      }
+    } else if (e.t === 'capture') {
+      particles.push({ type: 'ring', x: e.x, y: e.y, z: 0, life: 0, ttl: 0.8, size: 1.6, col: '120,220,140' });
+    } else if (e.t === 'complete') {
+      particles.push({ type: 'ring', x: e.x, y: e.y, z: 0, life: 0, ttl: 0.6, size: 1.2, col: '150,190,255' });
+    }
+  }
+
+  function spawnExplosion(x, y, s) {
+    particles.push({ type: 'boom', x: x, y: y, z: 0.3, life: 0, ttl: 0.32, size: s });
+    particles.push({ type: 'ring', x: x, y: y, z: 0, life: 0, ttl: 0.5, size: s * 1.5, col: '255,180,90' });
+    const n = Math.round(6 + s * 6);
+    for (let k = 0; k < n; k++) {
+      particles.push({
+        type: Math.random() < 0.5 ? 'smoke' : 'debris',
+        x: x, y: y, z: 0.3,
+        vx: (Math.random() - 0.5) * 4 * s, vy: (Math.random() - 0.5) * 4 * s,
+        vz: 1.5 + Math.random() * 3.5 * s,
+        life: 0, ttl: 0.6 + Math.random() * 0.9, size: 2 + Math.random() * 3 * s
+      });
+    }
+  }
+
+  /* ---------------- fog layer ---------------- */
+  function updateFogCanvas(state) {
+    const map = state.map;
+    if (!fogCanvas) {
+      fogCanvas = document.createElement('canvas');
+      fogCanvas.width = map.w; fogCanvas.height = map.h;
+      fogCtx = fogCanvas.getContext('2d');
+    }
+    const img = fogCtx.createImageData(map.w, map.h);
+    const d = img.data;
+    const fog = state.fog;
+    for (let i = 0; i < map.w * map.h; i++) {
+      const o = i * 4;
+      d[o] = 4; d[o + 1] = 7; d[o + 2] = 12;
+      d[o + 3] = fog.explored[i] ? (fog.visible[i] ? 0 : 120) : 252;
+    }
+    fogCtx.putImageData(img, 0, 0);
+  }
+
+  /* ---------------- main draw ---------------- */
+  let waterFrame = 0, fogUpdateT = 0;
+
+  function render(alpha, dtF, nowMs) {
+    const state = RTS.game.state;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    if (!state) {
+      ctx.fillStyle = '#0a0e14';
+      ctx.fillRect(0, 0, vw, vh);
+      return;
+    }
+    clampCamera(state.map);
+    waterFrame = Math.floor(state.time * 2.4) % 3;
+
+    /* screen shake */
+    let shx = 0, shy = 0;
+    if (shake > 0.2) {
+      shx = (Math.random() - 0.5) * shake;
+      shy = (Math.random() - 0.5) * shake;
+      shake *= Math.pow(0.02, dtF);
+    } else shake = 0;
+    ctx.setTransform(dpr, 0, 0, dpr, shx * dpr, shy * dpr);
+
+    ctx.fillStyle = '#0d1420';
+    ctx.fillRect(-20, -20, vw + 40, vh + 40);
+
+    drawTerrain(state);
+    drawSprites(state, alpha);
+    drawProjectiles(state, alpha);
+    drawParticles(state, dtF);
+    drawOverlays(state);
+    drawFog(state, dtF);
+    drawLighting(state);
+    drawWeatherFx(state, dtF);
+  }
+
+  function visibleTileBounds(map) {
+    const corners = [
+      screenToWorld(-TW, -TH * 3), screenToWorld(vw + TW, -TH * 3),
+      screenToWorld(-TW, vh + TH * 3), screenToWorld(vw + TW, vh + TH * 3)
+    ];
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    for (const c of corners) {
+      x0 = Math.min(x0, c.x); x1 = Math.max(x1, c.x);
+      y0 = Math.min(y0, c.y); y1 = Math.max(y1, c.y);
+    }
+    return {
+      x0: Math.max(0, Math.floor(x0) - 1), x1: Math.min(map.w - 1, Math.ceil(x1) + 1),
+      y0: Math.max(0, Math.floor(y0) - 2), y1: Math.min(map.h - 1, Math.ceil(y1) + 2)
+    };
+  }
+
+  function drawTerrain(state) {
+    const map = state.map;
+    const b = visibleTileBounds(map);
+    const z = camera.zoom;
+    const dw = (TW + 2) * z, dh = (TH + 2) * z;
+    for (let gy = b.y0; gy <= b.y1; gy++) {
+      for (let gx = b.x0; gx <= b.x1; gx++) {
+        const i = gy * map.w + gx;
+        if (!state.fog.explored[i]) continue;
+        const t = map.terrain[i];
+        const v = (gx * 7 + gy * 13) % 3;
+        const frame = (t === T.WATER || t === T.RIVER) ? waterFrame : 0;
+        const p = worldToScreen(gx, gy); // top vertex of the tile diamond
+        const sx = p.x - TW2 * z - z, sy = p.y - z;
+        ctx.drawImage(S.tile(t, v, frame), sx, sy, dw, dh);
+        const r = map.road[i];
+        if (r) {
+          let mask = 0;
+          if (gx + 1 < map.w && map.road[i + 1]) mask |= 1;
+          if (gx - 1 >= 0 && map.road[i - 1]) mask |= 2;
+          if (gy + 1 < map.h && map.road[i + map.w]) mask |= 4;
+          if (gy - 1 >= 0 && map.road[i - map.w]) mask |= 8;
+          if (r !== 3) ctx.drawImage(S.road(mask, r), sx, sy, dw, dh);
+        }
+        if (map.deposit[i]) {
+          ctx.drawImage(S.deposit((gx * 3 + gy) % 5), sx, sy, dw, dh);
+        }
+      }
+    }
+  }
+
+  function entVisible(state, e) {
+    const fog = state.fog, map = state.map;
+    const i = (e.y | 0) * map.w + (e.x | 0);
+    if (e.kind === 'building') return fog.explored[i];
+    if (e.owner === state.localPlayer) return true;
+    return fog.visible[i];
+  }
+
+  function drawSprites(state, alpha) {
+    const map = state.map;
+    const b = visibleTileBounds(map);
+    const z = camera.zoom;
+    const items = [];
+
+    /* decor */
+    for (const d of map.decor) {
+      if (d.gx < b.x0 || d.gx > b.x1 || d.gy < b.y0 || d.gy > b.y1) continue;
+      if (!state.fog.explored[d.gy * map.w + d.gx]) continue;
+      items.push({ depth: d.gx + d.gy + d.ox + d.oy + 1, kind: 'decor', d: d });
+    }
+    /* buildings */
+    for (const bd of state.buildings) {
+      if (bd.dead) continue;
+      if (bd.x + bd.w < b.x0 - 3 || bd.x - bd.w > b.x1 + 3 || bd.y + bd.h < b.y0 - 3 || bd.y - bd.h > b.y1 + 6) continue;
+      if (!entVisible(state, bd)) continue;
+      items.push({ depth: bd.x + bd.y, kind: 'building', e: bd });
+    }
+    /* units */
+    for (const u of state.units) {
+      if (u.dead) continue;
+      const ux = U.lerp(u.px, u.x, alpha), uy = U.lerp(u.py, u.y, alpha);
+      if (ux < b.x0 - 2 || ux > b.x1 + 2 || uy < b.y0 - 2 || uy > b.y1 + 3) continue;
+      if (!entVisible(state, u)) continue;
+      items.push({ depth: ux + uy + (u.z > 0 ? 90 : 0), kind: 'unit', e: u, ux: ux, uy: uy });
+    }
+    items.sort(function (a, bb) { return a.depth - bb.depth; });
+
+    for (const it of items) {
+      if (it.kind === 'decor') drawDecor(it.d, z);
+      else if (it.kind === 'building') drawBuilding(state, it.e, z);
+      else drawUnit(state, it.e, it.ux, it.uy, z);
+    }
+  }
+
+  function drawDecor(d, z) {
+    const img = S.decor(d.type);
+    const p = worldToScreen(d.gx + 0.5 + d.ox, d.gy + 0.5 + d.oy);
+    const w = img.width * z * d.s, h = img.height * z * d.s;
+    ctx.drawImage(img, p.x - w / 2, p.y + TH2 * z - h + 2 * z, w, h);
+  }
+
+  function drawBuilding(state, bd, z) {
+    const spr = bd.complete || bd.progress > 0.6
+      ? S.building(bd.type, bd.owner)
+      : S.scaffold(bd.w, bd.h);
+    const p = worldToScreen(bd.gx, bd.gy);
+    const isSel = overlay.selection.indexOf(bd) >= 0;
+
+    if (isSel) drawFootprintRing(bd, z, '110,230,140');
+
+    if (!bd.complete) {
+      /* construction: rise from the ground with a clip */
+      const full = S.building(bd.type, bd.owner);
+      const ph = full.c.height * z;
+      const top = p.y - full.ay * z;
+      ctx.save();
+      ctx.beginPath();
+      const cut = ph * (1 - Math.min(1, bd.progress * 1.15));
+      ctx.rect(p.x - full.ax * z - 4, top + cut, full.c.width * z + 8, ph - cut + 4);
+      ctx.clip();
+      ctx.globalAlpha = 0.92;
+      ctx.drawImage(full.c, p.x - full.ax * z, top, full.c.width * z, ph);
+      ctx.restore();
+      ctx.globalAlpha = 1;
+      /* scaffold frame on top */
+      const sc = S.scaffold(bd.w, bd.h);
+      ctx.globalAlpha = 0.85;
+      ctx.drawImage(sc.c, p.x - sc.ax * z, p.y - sc.ay * z, sc.c.width * z, sc.c.height * z);
+      ctx.globalAlpha = 1;
+      drawBar(bd, bd.progress, '#57c268', z, 0);
+    } else {
+      ctx.drawImage(spr.c, p.x - spr.ax * z, p.y - spr.ay * z, spr.c.width * z, spr.c.height * z);
+      if (bd.hp < bd.maxHp) {
+        drawBar(bd, bd.hp / bd.maxHp, hpColor(bd.hp / bd.maxHp), z, 0);
+        if (bd.hp < bd.maxHp * 0.5) {
+          /* damage smoke */
+          if (Math.random() < 0.12) {
+            particles.push({
+              type: 'smoke', x: bd.x + (Math.random() - 0.5) * bd.w * 0.7,
+              y: bd.y + (Math.random() - 0.5) * bd.h * 0.7, z: 0.8,
+              vx: 0.1, vy: -0.1, vz: 0.8, life: 0, ttl: 1.4, size: 3.5
+            });
+          }
+        }
+      }
+      if (isSel && bd.rally) {
+        const rp = worldToScreen(bd.rally.x, bd.rally.y);
+        ctx.strokeStyle = 'rgba(255,215,94,0.8)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        const cp = worldToScreen(bd.x, bd.y);
+        ctx.moveTo(cp.x, cp.y);
+        ctx.lineTo(rp.x, rp.y + TH2 * z);
+        ctx.stroke();
+        ctx.fillStyle = 'rgba(255,215,94,0.9)';
+        ctx.beginPath();
+        ctx.moveTo(rp.x, rp.y - 10 * z + TH2 * z);
+        ctx.lineTo(rp.x + 7 * z, rp.y - 6 * z + TH2 * z);
+        ctx.lineTo(rp.x, rp.y - 2 * z + TH2 * z);
+        ctx.closePath();
+        ctx.fill();
+      }
+    }
+  }
+
+  function drawFootprintRing(bd, z, rgb) {
+    const p0 = worldToScreen(bd.gx, bd.gy);
+    const p1 = worldToScreen(bd.gx + bd.w, bd.gy);
+    const p2 = worldToScreen(bd.gx + bd.w, bd.gy + bd.h);
+    const p3 = worldToScreen(bd.gx, bd.gy + bd.h);
+    ctx.strokeStyle = 'rgba(' + rgb + ',0.9)';
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.moveTo(p0.x, p0.y); ctx.lineTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.lineTo(p3.x, p3.y);
+    ctx.closePath();
+    ctx.stroke();
+  }
+
+  function hpColor(f) {
+    return f > 0.6 ? '#57c268' : f > 0.3 ? '#e0b23f' : '#e05038';
+  }
+
+  function drawBar(e, frac, color, z, dy) {
+    const isB = e.kind === 'building';
+    const w = (isB ? (e.w + e.h) * 10 : 22) * z;
+    const p = isB
+      ? worldToScreen(e.x, e.y)
+      : worldToScreen(e.x, e.y);
+    const y = p.y - (isB ? (30 + (e.w + e.h) * 8) : (e.z > 0 ? 46 : 26)) * z + dy;
+    ctx.fillStyle = 'rgba(8,10,16,0.75)';
+    ctx.fillRect(p.x - w / 2 - 1, y - 1, w + 2, 4 * z + 2);
+    ctx.fillStyle = color;
+    ctx.fillRect(p.x - w / 2, y, w * U.clamp(frac, 0, 1), 4 * z);
+  }
+
+  function drawUnit(state, u, ux, uy, z) {
+    const def = C.UNITS[u.type];
+    const p = worldToScreen(ux, uy);
+    const isSel = overlay.selection.indexOf(u) >= 0;
+    const moving = !!u.path;
+    /* facing octant: convert world dir to screen angle */
+    const sdx = Math.cos(u.dir), sdy = Math.sin(u.dir);
+    const ang = Math.atan2(sdy, sdx);
+    let dir8 = Math.round(ang / (Math.PI / 4));
+    dir8 = ((dir8 % 8) + 8) % 8;
+    const frame = moving || def.air ? (Math.floor(u.animT * 4) % 2) : 0;
+
+    const hover = def.air ? Math.sin(state.time * 2.2 + u.id) * 3 : 0;
+    const lift = def.air ? 38 : 0;
+
+    if (isSel) {
+      ctx.strokeStyle = u.owner === state.localPlayer ? 'rgba(110,230,140,0.9)' : 'rgba(230,110,90,0.9)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.ellipse(p.x, p.y + 3 * z, 13 * z * (def.radius + 0.75), 6.5 * z * (def.radius + 0.75), 0, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    if (def.air) {
+      /* drop shadow on the ground */
+      ctx.fillStyle = 'rgba(0,0,0,0.25)';
+      ctx.beginPath();
+      ctx.ellipse(p.x, p.y + 3 * z, 9 * z, 4 * z, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    const img = S.unit(u.type, u.owner, dir8, frame);
+    const sw = img.width * z, sh = img.height * z;
+    ctx.drawImage(img, p.x - sw / 2, p.y - sh / 2 - (lift + hover) * z * 0.55 - 8 * z, sw, sh);
+
+    if (u.hp < u.maxHp || isSel) {
+      drawBar(u, u.hp / u.maxHp, hpColor(u.hp / u.maxHp), z, def.air ? -(lift + hover) * z * 0.55 : 0);
+    }
+    /* stance pip */
+    if (isSel && u.owner === state.localPlayer) {
+      const cols = { guard: '#7fb2e8', assault: '#e08050', hold: '#c8c8c8', patrol: '#b08fe0' };
+      ctx.fillStyle = cols[u.stance] || '#fff';
+      ctx.fillRect(p.x + 12 * z, p.y - 24 * z, 4 * z, 4 * z);
+    }
+    /* capture / build channel */
+    if (u.channel > 0) {
+      drawBar(u, u.channel / C.ECON.captureTime, '#ffd75e', z, -6 * z);
+    }
+  }
+
+  function drawProjectiles(state, alpha) {
+    const z = camera.zoom;
+    for (const pr of state.projectiles) {
+      const p = worldToScreen(pr.x, pr.y);
+      const py = p.y - pr.z * TH * z;
+      if (pr.type === 'bullet') {
+        const back = worldToScreen(pr.x - (pr.tx - pr.sx) * 0.04, pr.y - (pr.ty - pr.sy) * 0.04);
+        ctx.strokeStyle = 'rgba(255,230,150,0.9)';
+        ctx.lineWidth = 1.5 * z;
+        ctx.beginPath();
+        ctx.moveTo(back.x, back.y - pr.z * TH * z);
+        ctx.lineTo(p.x, py);
+        ctx.stroke();
+      } else if (pr.type === 'rocket') {
+        ctx.fillStyle = '#f2e2c0';
+        ctx.fillRect(p.x - 2 * z, py - 2 * z, 4 * z, 4 * z);
+        particles.push({ type: 'smoke', x: pr.x, y: pr.y, z: pr.z, vx: 0, vy: 0, vz: 0.15, life: 0, ttl: 0.35, size: 1.8 });
+      } else { // shell / arc
+        ctx.fillStyle = '#2b2f36';
+        ctx.beginPath();
+        ctx.arc(p.x, py, (pr.type === 'arc' ? 3 : 2.2) * z, 0, Math.PI * 2);
+        ctx.fill();
+        if (pr.type === 'arc') {
+          ctx.fillStyle = 'rgba(0,0,0,0.25)';
+          ctx.beginPath();
+          ctx.ellipse(p.x, p.y + 2, 3 * z, 1.5 * z, 0, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    }
+  }
+
+  function drawParticles(state, dtF) {
+    const z = camera.zoom;
+    for (let i = particles.length - 1; i >= 0; i--) {
+      const pt = particles[i];
+      pt.life += dtF;
+      if (pt.life >= pt.ttl) { particles.splice(i, 1); continue; }
+      const f = pt.life / pt.ttl;
+      pt.x += (pt.vx || 0) * dtF;
+      pt.y += (pt.vy || 0) * dtF;
+      pt.z += (pt.vz || 0) * dtF;
+      if (pt.vz !== undefined && pt.type === 'debris') pt.vz -= 9 * dtF;
+      const p = worldToScreen(pt.x, pt.y);
+      const py = p.y - pt.z * TH * z;
+      switch (pt.type) {
+        case 'boom': {
+          const r = (6 + f * 26 * pt.size) * z;
+          const g = ctx.createRadialGradient(p.x, py, 0, p.x, py, r);
+          g.addColorStop(0, 'rgba(255,245,200,' + (1 - f) + ')');
+          g.addColorStop(0.4, 'rgba(255,160,60,' + (0.9 - f * 0.9) + ')');
+          g.addColorStop(1, 'rgba(120,40,10,0)');
+          ctx.fillStyle = g;
+          ctx.beginPath(); ctx.arc(p.x, py, r, 0, Math.PI * 2); ctx.fill();
+          break;
+        }
+        case 'flash': {
+          ctx.fillStyle = 'rgba(255,240,180,' + (1 - f) + ')';
+          ctx.beginPath(); ctx.arc(p.x, py, pt.size * z * (1 - f * 0.5), 0, Math.PI * 2); ctx.fill();
+          break;
+        }
+        case 'smoke': {
+          ctx.fillStyle = 'rgba(90,92,98,' + (0.4 * (1 - f)) + ')';
+          ctx.beginPath(); ctx.arc(p.x, py, (pt.size + f * 6) * z, 0, Math.PI * 2); ctx.fill();
+          break;
+        }
+        case 'spark':
+        case 'debris': {
+          ctx.fillStyle = pt.type === 'spark'
+            ? 'rgba(255,210,120,' + (1 - f) + ')'
+            : 'rgba(70,66,60,' + (1 - f) + ')';
+          ctx.fillRect(p.x - pt.size * z / 2, py - pt.size * z / 2, pt.size * z, pt.size * z);
+          break;
+        }
+        case 'ring': {
+          ctx.strokeStyle = 'rgba(' + (pt.col || '255,255,255') + ',' + (1 - f) + ')';
+          ctx.lineWidth = 2 * z;
+          ctx.beginPath();
+          ctx.ellipse(p.x, p.y, f * TW * pt.size * z, f * TH * pt.size * z, 0, 0, Math.PI * 2);
+          ctx.stroke();
+          break;
+        }
+      }
+    }
+  }
+
+  /* ---------------- placement ghost + road preview ---------------- */
+  function drawOverlays(state) {
+    const z = camera.zoom;
+    if (overlay.ghost) {
+      const g = overlay.ghost;
+      const def = C.BUILDINGS[g.type];
+      /* tint footprint tiles */
+      for (let y = g.gy; y < g.gy + def.h; y++) {
+        for (let x = g.gx; x < g.gx + def.w; x++) {
+          const p = worldToScreen(x, y);
+          ctx.beginPath();
+          ctx.moveTo(p.x, p.y);
+          ctx.lineTo(p.x + TW2 * z, p.y + TH2 * z);
+          ctx.lineTo(p.x, p.y + TH * z);
+          ctx.lineTo(p.x - TW2 * z, p.y + TH2 * z);
+          ctx.closePath();
+          ctx.fillStyle = g.ok ? 'rgba(90,220,120,0.35)' : 'rgba(230,80,60,0.4)';
+          ctx.fill();
+        }
+      }
+      const spr = S.building(g.type, state.localPlayer);
+      const p = worldToScreen(g.gx, g.gy);
+      ctx.globalAlpha = 0.55;
+      ctx.drawImage(spr.c, p.x - spr.ax * z, p.y - spr.ay * z, spr.c.width * z, spr.c.height * z);
+      ctx.globalAlpha = 1;
+      /* build radius hint */
+      ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+      ctx.setLineDash([4, 6]);
+      for (const b of state.buildings) {
+        if (b.dead || b.owner !== state.localPlayer) continue;
+        const bp = worldToScreen(b.x, b.y);
+        ctx.beginPath();
+        ctx.ellipse(bp.x, bp.y, C.ECON.buildRadius * TW2 * z, C.ECON.buildRadius * TH2 * z, 0, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      ctx.setLineDash([]);
+    }
+    if (overlay.roadPath) {
+      for (const t of overlay.roadPath) {
+        const p = worldToScreen(t.x, t.y);
+        ctx.beginPath();
+        ctx.moveTo(p.x, p.y);
+        ctx.lineTo(p.x + TW2 * z, p.y + TH2 * z);
+        ctx.lineTo(p.x, p.y + TH * z);
+        ctx.lineTo(p.x - TW2 * z, p.y + TH2 * z);
+        ctx.closePath();
+        ctx.fillStyle = t.cost < 0 ? 'rgba(230,80,60,0.4)'
+          : t.cost > C.ECON.roadCostPerTile ? 'rgba(160,120,70,0.5)' : 'rgba(220,210,160,0.4)';
+        ctx.fill();
+      }
+    }
+  }
+
+  /* ---------------- fog ---------------- */
+  function drawFog(state, dtF) {
+    fogUpdateT -= dtF;
+    if (!fogCanvas || fogUpdateT <= 0) {
+      fogUpdateT = 0.22;
+      updateFogCanvas(state);
+    }
+    const z = camera.zoom;
+    const o = worldToScreen(0, 0);
+    ctx.save();
+    ctx.imageSmoothingEnabled = true;
+    /* linear iso mapping: tile (x,y) -> screen */
+    ctx.setTransform(
+      TW2 * z * dpr, TH2 * z * dpr,
+      -TW2 * z * dpr, TH2 * z * dpr,
+      o.x * dpr, o.y * dpr
+    );
+    ctx.drawImage(fogCanvas, 0, 0);
+    ctx.restore();
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  /* ---------------- lighting: day/night cycle ---------------- */
+  function drawLighting(state) {
+    const t = state.dayT; // 0..1, 0 = dawn
+    /* ambient darkness: min at midday (t=0.25), max at midnight (t=0.75) */
+    const daylight = Math.max(0, Math.sin(t * Math.PI * 2)); // day half
+    const nightness = Math.max(0, Math.sin((t - 0.5) * Math.PI * 2));
+    const duskGlow = Math.max(0, 1 - Math.abs(t - 0.5) * 14) + Math.max(0, 1 - Math.abs(t - 0.995) * 14);
+
+    if (nightness > 0.01) {
+      ctx.fillStyle = 'rgba(10,16,40,' + (nightness * 0.52) + ')';
+      ctx.fillRect(0, 0, vw, vh);
+    }
+    if (duskGlow > 0.01) {
+      ctx.fillStyle = 'rgba(255,120,40,' + (duskGlow * 0.13) + ')';
+      ctx.fillRect(0, 0, vw, vh);
+    }
+    /* window lights & headlights at night */
+    if (nightness > 0.25) {
+      const z = camera.zoom;
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      const a = (nightness - 0.25) * 0.5;
+      for (const b of RTS.game.state.buildings) {
+        if (b.dead || !b.complete || !entVisible(state, b)) continue;
+        const p = worldToScreen(b.x, b.y);
+        const r = (b.w + b.h) * 14 * z;
+        const g = ctx.createRadialGradient(p.x, p.y - 8 * z, 0, p.x, p.y - 8 * z, r);
+        g.addColorStop(0, 'rgba(255,214,140,' + a + ')');
+        g.addColorStop(1, 'rgba(255,214,140,0)');
+        ctx.fillStyle = g;
+        ctx.beginPath(); ctx.arc(p.x, p.y - 8 * z, r, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.restore();
+    }
+  }
+
+  /* ---------------- weather ---------------- */
+  function drawWeatherFx(state, dtF) {
+    fxCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    fxCtx.clearRect(0, 0, vw, vh);
+    const wt = state.weather.type;
+
+    if (wt === 'rain') {
+      /* maintain drop pool */
+      while (rainDrops.length < 130) {
+        rainDrops.push({ x: Math.random() * vw, y: Math.random() * vh, s: 0.6 + Math.random() * 0.8 });
+      }
+      fxCtx.strokeStyle = 'rgba(170,200,235,0.4)';
+      fxCtx.lineWidth = 1;
+      fxCtx.beginPath();
+      for (const d of rainDrops) {
+        d.x -= 340 * d.s * dtF * 0.35;
+        d.y += 620 * d.s * dtF;
+        if (d.y > vh) { d.y = -12; d.x = Math.random() * (vw + 120); }
+        fxCtx.moveTo(d.x, d.y);
+        fxCtx.lineTo(d.x - 3.5, d.y + 11 * d.s);
+      }
+      fxCtx.stroke();
+      fxCtx.fillStyle = 'rgba(30,45,70,0.10)';
+      fxCtx.fillRect(0, 0, vw, vh);
+    } else if (rainDrops.length) {
+      rainDrops.length = 0;
+    }
+
+    if (wt === 'fog') {
+      const t = performance.now() / 1000;
+      for (let k = 0; k < 3; k++) {
+        const cx = (Math.sin(t * 0.06 + k * 2.4) * 0.5 + 0.5) * vw;
+        const cy = (Math.cos(t * 0.045 + k * 1.7) * 0.5 + 0.5) * vh;
+        const g = fxCtx.createRadialGradient(cx, cy, 60, cx, cy, vw * 0.55);
+        g.addColorStop(0, 'rgba(200,208,218,0.16)');
+        g.addColorStop(1, 'rgba(200,208,218,0)');
+        fxCtx.fillStyle = g;
+        fxCtx.fillRect(0, 0, vw, vh);
+      }
+      fxCtx.fillStyle = 'rgba(190,198,210,0.10)';
+      fxCtx.fillRect(0, 0, vw, vh);
+    }
+  }
+
+  return {
+    init: init,
+    render: render,
+    onEvent: onEvent,
+    camera: camera,
+    overlay: overlay,
+    worldToScreen: worldToScreen,
+    screenToWorld: screenToWorld,
+    centerOn: centerOn,
+    get viewSize() { return { w: vw, h: vh }; }
+  };
+})();

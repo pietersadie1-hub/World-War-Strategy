@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>World War Strategy</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23182742'/%3E%3Cpath d='M16 4l12 8-12 8-12-8z' fill='%233f7fe0'/%3E%3Cpath d='M16 14l12 8-12 8-12-8z' fill='%235c8f45'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div id="game-container">
+  <canvas id="game-canvas"></canvas>
+  <canvas id="fx-canvas"></canvas>
+
+  <!-- HUD -->
+  <div id="hud" class="hidden">
+    <div id="top-bar">
+      <div class="res-group">
+        <div class="res-chip" id="res-minerals" title="Minerals"><span class="res-ico ico-min"></span><span class="res-val">0</span><span class="res-rate">+0</span></div>
+        <div class="res-chip" id="res-energy" title="Energy"><span class="res-ico ico-eng"></span><span class="res-val">0</span><span class="res-rate">+0</span></div>
+        <div class="res-chip" id="res-water" title="Water"><span class="res-ico ico-wat"></span><span class="res-val">0</span><span class="res-rate">+0</span></div>
+      </div>
+      <div id="clock-chip"><span id="daynight-ico">☀</span><span id="weather-ico"></span><span id="game-clock">00:00</span></div>
+      <button id="btn-menu" class="hud-btn">☰</button>
+    </div>
+
+    <div id="minimap-wrap">
+      <canvas id="minimap" width="184" height="184"></canvas>
+      <div id="minimap-view"></div>
+    </div>
+
+    <div id="bottom-panel">
+      <div id="panel-tabs">
+        <button class="ptab active" data-tab="build">Build</button>
+        <button class="ptab" data-tab="units">Command</button>
+      </div>
+      <div id="panel-body">
+        <div id="build-menu" class="panel-page"></div>
+        <div id="unit-panel" class="panel-page hidden">
+          <div id="sel-info">No selection</div>
+          <div id="sel-actions"></div>
+          <div id="prod-queue"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="toasts"></div>
+    <div id="cursor-hint"></div>
+  </div>
+
+  <!-- Main menu -->
+  <div id="menu-screen" class="overlay">
+    <div class="menu-box">
+      <h1>WORLD WAR<span> STRATEGY</span></h1>
+      <p class="tagline">Command rivers, roads and armies. Conquer the frontier.</p>
+      <div class="menu-buttons">
+        <button id="btn-newgame" class="menu-btn primary">Play vs AI</button>
+        <div id="difficulty-row" class="hidden">
+          <button class="menu-btn diff" data-diff="easy">Easy</button>
+          <button class="menu-btn diff" data-diff="normal">Normal</button>
+          <button class="menu-btn diff" data-diff="hard">Hard</button>
+        </div>
+        <button id="btn-multiplayer" class="menu-btn">Multiplayer (beta)</button>
+        <div id="mp-row" class="hidden">
+          <input id="mp-server" type="text" placeholder="ws://localhost:8765" value="">
+          <input id="mp-room" type="text" placeholder="room code" maxlength="12">
+          <button id="btn-mp-join" class="menu-btn">Join / Host</button>
+          <div id="mp-status"></div>
+        </div>
+        <button id="btn-load" class="menu-btn">Load Game</button>
+        <button id="btn-howto" class="menu-btn">How to Play</button>
+      </div>
+      <div id="howto" class="hidden">
+        <h3>How to play</h3>
+        <ul>
+          <li><b>Goal:</b> destroy the enemy Headquarters. Defend your own.</li>
+          <li><b>Select:</b> click / drag a box. <b>Order:</b> right-click (or tap with selection) to move, attack, or capture.</li>
+          <li><b>Economy:</b> build Mines on mineral fields ◆, Pumps by water, Power Plants and Dams for energy. Dams also bridge rivers.</li>
+          <li><b>Roads</b> speed up your units — pave supply lines, bridge rivers.</li>
+          <li><b>Stances:</b> Guard, Patrol, Assault, Hold — set attack readiness per squad.</li>
+          <li><b>Capture</b> neutral town buildings with Engineers for bonus income.</li>
+          <li><b>Keys:</b> WASD/edge pan, wheel zoom, A attack-move, P patrol, S stop, 1-9 groups (Ctrl+n assign), F5 quick-save, F9 quick-load, Esc cancel/menu.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- Pause menu -->
+  <div id="pause-screen" class="overlay hidden">
+    <div class="menu-box small">
+      <h2>Paused</h2>
+      <button id="btn-resume" class="menu-btn primary">Resume</button>
+      <button id="btn-save" class="menu-btn">Save Game</button>
+      <button id="btn-load2" class="menu-btn">Load Game</button>
+      <button id="btn-quit" class="menu-btn">Quit to Menu</button>
+    </div>
+  </div>
+
+  <!-- Game over -->
+  <div id="end-screen" class="overlay hidden">
+    <div class="menu-box small">
+      <h2 id="end-title">Victory</h2>
+      <p id="end-text"></p>
+      <button id="btn-end-menu" class="menu-btn primary">Back to Menu</button>
+    </div>
+  </div>
+</div>
+
+<script src="js/util.js"></script>
+<script src="js/config.js"></script>
+<script src="js/map.js"></script>
+<script src="js/path.js"></script>
+<script src="js/sprites.js"></script>
+<script src="js/entities.js"></script>
+<script src="js/game.js"></script>
+<script src="js/ai.js"></script>
+<script src="js/save.js"></script>
+<script src="js/net.js"></script>
+<script src="js/render.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/input.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>
