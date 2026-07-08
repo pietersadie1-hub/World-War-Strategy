@@ -172,7 +172,15 @@ RTS.ai = (function () {
     const r = state.rand.next();
     if (btype === 'barracks') return r < 0.6 ? 'infantry' : 'rocket';
     if (btype === 'factory') return r < 0.7 ? 'tank' : 'artillery';
-    if (btype === 'airfield') return 'gunship';
+    if (btype === 'airfield') {
+      /* mix the air wing: gunships, bombers for sieges, fighters when the enemy flies */
+      const enemyId = 1 - state.ai.p;
+      const enemyAir = state.units.some(function (u) {
+        return !u.dead && u.owner === enemyId && C.UNITS[u.type].air;
+      });
+      if (enemyAir && r < 0.4) return 'fighter';
+      return r < 0.55 ? 'gunship' : r < 0.85 ? 'bomber' : 'fighter';
+    }
     return null;
   }
 

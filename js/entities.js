@@ -78,6 +78,9 @@ RTS.entities = (function () {
     if (weapon && weapon.bonusVsBuilding && target.kind === 'building') {
       amount *= weapon.bonusVsBuilding;
     }
+    if (weapon && weapon.bonusVsAir && target.kind === 'unit' && C.UNITS[target.type].air) {
+      amount *= weapon.bonusVsAir;
+    }
     target.hp -= amount;
     target.lastHitT = state.time;
     target.lastHitBy = srcOwner;
@@ -86,9 +89,15 @@ RTS.entities = (function () {
       if (target.kind === 'unit') {
         target.dead = true;
         delete state.byId[target.id];
-        RTS.events.push({ t: 'explosion', x: target.x, y: target.y, s: C.UNITS[target.type].air ? 1.1 : 0.8, air: target.z > 0 });
+        if (target.owner >= 0) state.stats.unitsLost[target.owner]++;
+        if (srcOwner >= 0 && srcOwner !== target.owner) state.stats.unitsKilled[srcOwner]++;
+        const udef = C.UNITS[target.type];
+        RTS.events.push({
+          t: 'explosion', x: target.x, y: target.y,
+          s: udef.air ? 1.1 : 0.8, air: target.z > 0, utype: target.type
+        });
       } else {
-        RTS.events.push({ t: 'explosion', x: target.x, y: target.y, s: 1 + (target.w + target.h) * 0.35 });
+        RTS.events.push({ t: 'explosion', x: target.x, y: target.y, s: 1 + (target.w + target.h) * 0.35, building: true });
         removeBuilding(state, target);
         RTS.game.onBuildingDestroyed(state, target, srcOwner);
       }
@@ -163,12 +172,18 @@ RTS.entities = (function () {
     return !e.dead && e.owner !== me.owner && e.owner !== -1;
   }
 
+  function canHit(weapon, e) {
+    return !(weapon && weapon.groundOnly && e.kind === 'unit' && C.UNITS[e.type].air);
+  }
+
   function acquireTarget(state, u, radius, includeBuildings) {
     /* deterministic scan: nearest enemy, units preferred over buildings */
     let best = null, bestD = radius;
     const def = C.UNITS[u.type];
+    const weapon = def && def.weapon;
     for (const e of state.units) {
       if (!isEnemy(state, u, e)) continue;
+      if (!canHit(weapon, e)) continue;
       const d = U.dist(u.x, u.y, e.x, e.y);
       if (d < bestD) { bestD = d; best = e; }
     }
@@ -195,7 +210,9 @@ RTS.entities = (function () {
       targetId: target.id, tx: target.x, ty: target.y,
       dmg: weapon.dmg, splash: weapon.splash || 0, weapon: weapon,
       owner: u.owner, t: 0,
-      dur: weapon.projectile === 'arc' ? 0.55 + d * 0.09 : d / 13
+      dur: weapon.projectile === 'arc' ? 0.55 + d * 0.09
+         : weapon.projectile === 'bomb' ? 0.55
+         : d / 13
     };
     state.projectiles.push(proj);
     RTS.events.push({ t: 'muzzle', x: u.x, y: u.y, z: proj.z, dir: u.dir, kind: weapon.projectile });
@@ -213,12 +230,14 @@ RTS.entities = (function () {
       p.x = U.lerp(p.sx, p.tx, k);
       p.y = U.lerp(p.sy, p.ty, k);
       if (p.type === 'arc') p.z = 0.4 + Math.sin(k * Math.PI) * 2.6;
+      else if (p.type === 'bomb') p.z = U.lerp(2.3, 0, k * k); // free fall from the plane
       if (k >= 1) {
         list.splice(i, 1);
         if (p.splash > 0) {
-          RTS.events.push({ t: 'explosion', x: p.tx, y: p.ty, s: p.splash });
+          RTS.events.push({ t: 'explosion', x: p.tx, y: p.ty, s: p.splash, ground: true });
           for (const e of state.units) {
             if (e.dead || e.owner === p.owner) continue;
+            if (!canHit(p.weapon, e)) continue;
             if (U.dist(e.x, e.y, p.tx, p.ty) <= p.splash) damage(state, e, p.dmg, p.owner, p.weapon);
           }
           for (const e of state.buildings) {
@@ -227,7 +246,7 @@ RTS.entities = (function () {
           }
         } else if (tgt && !tgt.dead) {
           damage(state, tgt, p.dmg, p.owner, p.weapon);
-          RTS.events.push({ t: 'hit', x: p.tx, y: p.ty, kind: p.type });
+          RTS.events.push({ t: 'hit', x: p.tx, y: p.ty, kind: p.type, z: tgt.z || 0.35 });
         }
       }
     }
@@ -296,7 +315,7 @@ RTS.entities = (function () {
       case 'attack': {
         const tgt = state.byId[o.targetId];
         if (!tgt || tgt.dead) { u.order = { kind: 'none' }; u.path = null; break; }
-        if (!def.weapon) { u.order = { kind: 'none' }; break; }
+        if (!def.weapon || !canHit(def.weapon, tgt)) { u.order = { kind: 'none' }; break; }
         engage(state, u, tgt, dt, def, false);
         break;
       }

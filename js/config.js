@@ -74,7 +74,7 @@ RTS.config = (function () {
     airfield: {
       name: 'Airfield', w: 3, h: 2, hp: 1100, sight: 7, buildTime: 34,
       cost: { m: 280, e: 130, w: 0 }, provides: {}, energyUse: 1.5,
-      place: 'land', trains: ['gunship'], desc: 'Builds and services gunships.'
+      place: 'land', trains: ['gunship', 'fighter', 'bomber'], desc: 'Builds and services aircraft.'
     },
     turret: {
       name: 'Guard Turret', w: 1, h: 1, hp: 620, sight: 8, buildTime: 14,
@@ -125,14 +125,26 @@ RTS.config = (function () {
     artillery: {
       name: 'Artillery', hp: 130, speed: 1.6, sight: 7, buildTime: 18, radius: 0.36,
       cost: { m: 190, e: 95, w: 0 }, air: false,
-      weapon: { dmg: 62, range: 8.2, minRange: 2.5, rof: 3.8, projectile: 'arc', splash: 1.4 },
+      weapon: { dmg: 62, range: 8.2, minRange: 2.5, rof: 3.8, projectile: 'arc', splash: 1.4, groundOnly: true },
       desc: 'Long-range bombardment. Fragile up close.'
     },
     gunship: {
       name: 'Gunship', hp: 190, speed: 4.3, sight: 8, buildTime: 16, radius: 0.34,
       cost: { m: 210, e: 120, w: 25 }, air: true,
       weapon: { dmg: 24, range: 4.2, rof: 1.1, projectile: 'rocket' },
-      desc: 'Fast attack aircraft. Ignores terrain.'
+      desc: 'Fast attack helicopter. Ignores terrain.'
+    },
+    fighter: {
+      name: 'Fighter', hp: 150, speed: 5.4, sight: 8.5, buildTime: 14, radius: 0.34,
+      cost: { m: 180, e: 110, w: 15 }, air: true,
+      weapon: { dmg: 15, range: 4.0, rof: 0.7, projectile: 'bullet', bonusVsAir: 2.4 },
+      desc: 'Fast interceptor plane. Shreds enemy aircraft.'
+    },
+    bomber: {
+      name: 'Strike Bomber', hp: 250, speed: 3.6, sight: 7, buildTime: 20, radius: 0.38,
+      cost: { m: 270, e: 150, w: 25 }, air: true,
+      weapon: { dmg: 68, range: 2.4, rof: 3.4, projectile: 'bomb', splash: 1.7, groundOnly: true, bonusVsBuilding: 1.4 },
+      desc: 'Heavy bomber plane. Devastates ground targets and bases.'
     }
   };
 

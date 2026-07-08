@@ -34,7 +34,13 @@ RTS.ui = (function () {
     els.prodQueue = $('prod-queue');
     els.toasts = $('toasts');
     els.hint = $('cursor-hint');
+    els.intelBarYou = $('intel-bar-you');
+    els.intelPanel = $('intel-panel');
     minimapCtx = els.minimap.getContext('2d');
+
+    $('intel-chip').addEventListener('click', function () {
+      els.intelPanel.classList.toggle('hidden');
+    });
 
     /* panel tabs */
     document.querySelectorAll('.ptab').forEach(function (tab) {
@@ -79,6 +85,7 @@ RTS.ui = (function () {
     mode.kind = 'none'; mode.type = null;
     pendingCmd = null;
     mmTerrain = null;
+    RTS.render.reset();
     RTS.render.overlay.selection = [];
     RTS.render.overlay.ghost = null;
     RTS.render.overlay.roadPath = null;
@@ -353,8 +360,62 @@ RTS.ui = (function () {
       panelT = 0.5;
       refreshBuildButtons();
       refreshPanel();
+      updateIntel(state);
     }
     drawMinimap(state, dt);
+  }
+
+  /* ---------------- battlefield intel: how is the other side doing? ---------------- */
+  function costValue(cost) { return (cost.m || 0) + (cost.e || 0) + (cost.w || 0); }
+
+  function militaryPower(state, p) {
+    let v = 0;
+    for (const u of state.units) {
+      if (u.dead || u.owner !== p) continue;
+      const def = C.UNITS[u.type];
+      if (def.weapon) v += costValue(def.cost) * (u.hp / u.maxHp);
+    }
+    for (const b of state.buildings) {
+      if (b.dead || b.owner !== p || !b.complete) continue;
+      const def = C.BUILDINGS[b.type];
+      if (def.weapon) v += costValue(def.cost) * (b.hp / b.maxHp);
+    }
+    return Math.round(v);
+  }
+
+  function updateIntel(state) {
+    const me = state.localPlayer, foe = 1 - me;
+    const pow = [militaryPower(state, me), militaryPower(state, foe)];
+    const frac = (pow[0] + pow[1]) > 0 ? pow[0] / (pow[0] + pow[1]) : 0.5;
+    els.intelBarYou.style.width = Math.round(U.clamp(frac, 0.04, 0.96) * 100) + '%';
+
+    if (els.intelPanel.classList.contains('hidden')) return;
+    const cnt = [
+      { u: 0, b: 0 }, { u: 0, b: 0 }
+    ];
+    for (const u of state.units) {
+      if (!u.dead && u.owner >= 0) cnt[u.owner === me ? 0 : 1].u++;
+    }
+    for (const b of state.buildings) {
+      if (!b.dead && b.owner >= 0) cnt[b.owner === me ? 0 : 1].b++;
+    }
+    $('ip-pow0').textContent = pow[0];
+    $('ip-pow1').textContent = pow[1];
+    $('ip-units0').textContent = cnt[0].u;
+    $('ip-units1').textContent = cnt[1].u;
+    $('ip-bld0').textContent = cnt[0].b;
+    $('ip-bld1').textContent = cnt[1].b;
+    $('ip-kill0').textContent = state.stats.unitsKilled[me];
+    $('ip-kill1').textContent = state.stats.unitsKilled[foe];
+    $('ip-raze0').textContent = state.stats.buildingsRazed[me];
+    $('ip-raze1').textContent = state.stats.buildingsRazed[foe];
+    $('ip-verdict').textContent =
+      state.players[foe].defeated ? 'Enemy command has collapsed.'
+      : frac > 0.66 ? 'You hold a decisive military advantage.'
+      : frac > 0.55 ? 'You have the upper hand.'
+      : frac >= 0.45 ? 'Forces are evenly matched.'
+      : frac >= 0.34 ? 'The enemy is gaining strength — reinforce!'
+      : 'Enemy forces vastly outnumber yours!';
   }
 
   function setRes(el, val, rate) {

@@ -39,8 +39,38 @@ html, body {
 .res-chip.flash { animation: resflash .4s; }
 @keyframes resflash { 0%,100%{ border-color:#2c3c55 } 50%{ border-color:#ff5a45; background:rgba(90,20,15,.9) } }
 
-#clock-chip {
+#intel-chip {
   margin-left: auto; display: flex; align-items: center; gap: 7px;
+  background: rgba(18,26,40,.85); border: 1px solid #2c3c55; border-radius: 6px;
+  padding: 3px 10px; cursor: pointer;
+}
+#intel-chip:hover { border-color: #5b83c0; }
+.intel-swords { font-size: 9px; font-weight: 800; letter-spacing: .05em; color: #8ea2bd; }
+#intel-bar {
+  width: 86px; height: 8px; border-radius: 4px; overflow: hidden;
+  background: linear-gradient(90deg, #8e2c1d, #e05038); /* enemy red underneath */
+}
+#intel-bar-you {
+  height: 100%; width: 50%;
+  background: linear-gradient(90deg, #274f92, #3f7fe0);
+  border-right: 1px solid rgba(255,255,255,.7);
+  transition: width .6s ease;
+}
+#intel-panel {
+  position: absolute; top: 48px; right: 10px; width: 250px;
+  background: rgba(12,18,30,.95); border: 1px solid #2c3c55; border-radius: 10px;
+  padding: 12px 14px; font-size: 12px; z-index: 6;
+}
+#intel-panel h4 { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: #8ea2bd; margin-bottom: 8px; }
+#intel-panel table { width: 100%; border-collapse: collapse; }
+#intel-panel td, #intel-panel th { padding: 3px 4px; text-align: right; font-variant-numeric: tabular-nums; }
+#intel-panel td:first-child { text-align: left; color: #9ab0cc; }
+#intel-panel th:nth-child(2) { color: #8ab4f2; }
+#intel-panel th:nth-child(3) { color: #f2937f; }
+#ip-verdict { margin-top: 8px; color: #ffd08a; font-size: 11.5px; min-height: 14px; }
+
+#clock-chip {
+  display: flex; align-items: center; gap: 7px;
   background: rgba(18,26,40,.85); border: 1px solid #2c3c55; border-radius: 6px;
   padding: 3px 10px; font-size: 13px; font-variant-numeric: tabular-nums;
 }
@@ -174,6 +204,8 @@ html, body {
   #bottom-panel { right: 6px; bottom: 6px; width: min(300px, calc(100vw - 138px)); }
   #panel-body { max-height: 168px; }
   .res-chip { min-width: 70px; font-size: 11.5px; padding: 2px 6px; }
+  #intel-bar { width: 46px; }
+  #intel-panel { right: 6px; width: 220px; }
   .menu-box { padding: 22px 20px; }
   .menu-box h1 { font-size: 24px; }
   .build-btn { min-height: 66px; }

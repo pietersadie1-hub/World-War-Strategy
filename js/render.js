@@ -65,21 +65,53 @@ RTS.render = (function () {
   }
 
   /* ---------------- events -> effects ---------------- */
+  let decals = []; // persistent battle scars: scorch marks, vehicle wrecks
+
+  function addDecal(x, y, size, type) {
+    decals.push({ x: x, y: y, size: size, type: type, life: 0, ttl: type === 'wreck' ? 34 : 22, rot: Math.random() * Math.PI });
+    if (decals.length > 70) decals.shift();
+  }
+
   function onEvent(e) {
     if (e.t === 'explosion') {
-      spawnExplosion(e.x, e.y, e.s || 1);
-      if (e.s > 1) shake = Math.min(10, shake + e.s * 3);
+      spawnExplosion(e.x, e.y, e.s || 1, e);
+      if (e.s > 1) shake = Math.min(12, shake + e.s * 3.2);
     } else if (e.t === 'muzzle') {
+      /* directional muzzle flash + smoke wisp */
       particles.push({
-        type: 'flash', x: e.x, y: e.y, z: e.z || 0.4, vx: 0, vy: 0, vz: 0,
-        life: 0, ttl: 0.07, size: e.kind === 'shell' ? 8 : 5
+        type: 'muzzleflash', x: e.x, y: e.y, z: e.z || 0.4, dir: e.dir,
+        life: 0, ttl: 0.08, size: e.kind === 'shell' ? 12 : e.kind === 'rocket' ? 9 : 6
       });
-    } else if (e.t === 'hit') {
-      for (let k = 0; k < 4; k++) {
+      if (e.kind === 'shell' || e.kind === 'arc') {
         particles.push({
-          type: 'spark', x: e.x, y: e.y, z: 0.4,
-          vx: (Math.random() - 0.5) * 3, vy: (Math.random() - 0.5) * 3, vz: Math.random() * 2.5,
-          life: 0, ttl: 0.3 + Math.random() * 0.2, size: 2
+          type: 'smoke', x: e.x, y: e.y, z: e.z || 0.4,
+          vx: Math.cos(e.dir) * 1.2, vy: Math.sin(e.dir) * 1.2, vz: 0.4,
+          life: 0, ttl: 0.5, size: 2.5
+        });
+      }
+    } else if (e.t === 'hit') {
+      const z = e.z || 0.4;
+      if (e.kind === 'bullet') {
+        for (let k = 0; k < 4; k++) {
+          particles.push({
+            type: 'spark', x: e.x, y: e.y, z: z,
+            vx: (Math.random() - 0.5) * 3, vy: (Math.random() - 0.5) * 3, vz: Math.random() * 2.5,
+            life: 0, ttl: 0.3 + Math.random() * 0.2, size: 2
+          });
+        }
+      } else {
+        /* shells & rockets pop properly on impact */
+        particles.push({ type: 'boom', x: e.x, y: e.y, z: z, life: 0, ttl: 0.22, size: 0.5 });
+        for (let k = 0; k < 5; k++) {
+          particles.push({
+            type: k < 3 ? 'spark' : 'dirt', x: e.x, y: e.y, z: z,
+            vx: (Math.random() - 0.5) * 4.5, vy: (Math.random() - 0.5) * 4.5, vz: 1 + Math.random() * 3,
+            life: 0, ttl: 0.35 + Math.random() * 0.3, size: 2 + Math.random() * 2
+          });
+        }
+        particles.push({
+          type: 'smoke', x: e.x, y: e.y, z: z, vx: 0, vy: 0, vz: 0.9,
+          life: 0, ttl: 0.7, size: 3
         });
       }
     } else if (e.t === 'capture') {
@@ -89,18 +121,54 @@ RTS.render = (function () {
     }
   }
 
-  function spawnExplosion(x, y, s) {
+  function spawnExplosion(x, y, s, meta) {
+    meta = meta || {};
+    /* bright core + fast shockwave + warm ring */
     particles.push({ type: 'boom', x: x, y: y, z: 0.3, life: 0, ttl: 0.32, size: s });
+    particles.push({ type: 'shock', x: x, y: y, z: 0, life: 0, ttl: 0.26, size: s * 1.9 });
     particles.push({ type: 'ring', x: x, y: y, z: 0, life: 0, ttl: 0.5, size: s * 1.5, col: '255,180,90' });
-    const n = Math.round(6 + s * 6);
+    /* sparks, debris, dirt */
+    const n = Math.round(8 + s * 7);
     for (let k = 0; k < n; k++) {
+      const r = Math.random();
       particles.push({
-        type: Math.random() < 0.5 ? 'smoke' : 'debris',
+        type: r < 0.35 ? 'debris' : r < 0.6 ? 'spark' : 'dirt',
         x: x, y: y, z: 0.3,
-        vx: (Math.random() - 0.5) * 4 * s, vy: (Math.random() - 0.5) * 4 * s,
-        vz: 1.5 + Math.random() * 3.5 * s,
-        life: 0, ttl: 0.6 + Math.random() * 0.9, size: 2 + Math.random() * 3 * s
+        vx: (Math.random() - 0.5) * 5 * s, vy: (Math.random() - 0.5) * 5 * s,
+        vz: 1.5 + Math.random() * 4 * s,
+        life: 0, ttl: 0.5 + Math.random() * 0.9, size: 2 + Math.random() * 3 * s
       });
+    }
+    /* fire pockets + rising smoke column */
+    const smokes = Math.round(3 + s * 3);
+    for (let k = 0; k < smokes; k++) {
+      particles.push({
+        type: 'smoke', x: x + (Math.random() - 0.5) * 0.5 * s, y: y + (Math.random() - 0.5) * 0.5 * s,
+        z: 0.3, vx: (Math.random() - 0.5) * 0.4, vy: (Math.random() - 0.5) * 0.4, vz: 0.9 + Math.random(),
+        delay: k * 0.12, life: 0, ttl: 0.9 + Math.random() * 1.1, size: 3 + s * 2.2
+      });
+    }
+    for (let k = 0; k < Math.round(s * 3); k++) {
+      particles.push({
+        type: 'fire', x: x + (Math.random() - 0.5) * 0.8 * s, y: y + (Math.random() - 0.5) * 0.8 * s,
+        z: 0.15, vx: 0, vy: 0, vz: 0.7,
+        delay: Math.random() * 0.25, life: 0, ttl: 0.4 + Math.random() * 0.5, size: 2.5 + Math.random() * 2.5
+      });
+    }
+    /* buildings collapse with staggered secondary blasts */
+    if (meta.building) {
+      for (let k = 0; k < 3; k++) {
+        particles.push({
+          type: 'boom', x: x + (Math.random() - 0.5) * s, y: y + (Math.random() - 0.5) * s,
+          z: 0.3, delay: 0.14 + k * 0.16, life: 0, ttl: 0.26, size: s * 0.45
+        });
+      }
+      shake = Math.min(14, shake + 4);
+    }
+    /* lasting scars on the ground */
+    if (!meta.air) {
+      if (meta.utype === 'tank' || meta.utype === 'artillery') addDecal(x, y, 0.8, 'wreck');
+      else if (meta.building || s >= 0.9) addDecal(x, y, Math.min(2.4, s), 'scorch');
     }
   }
 
@@ -150,6 +218,7 @@ RTS.render = (function () {
     ctx.fillRect(-20, -20, vw + 40, vh + 40);
 
     drawTerrain(state);
+    drawDecals(state, dtF);
     drawSprites(state, alpha);
     drawProjectiles(state, alpha);
     drawParticles(state, dtF);
@@ -201,6 +270,47 @@ RTS.render = (function () {
         }
         if (map.deposit[i]) {
           ctx.drawImage(S.deposit((gx * 3 + gy) % 5), sx, sy, dw, dh);
+        }
+      }
+    }
+  }
+
+  function drawDecals(state, dtF) {
+    const z = camera.zoom;
+    for (let i = decals.length - 1; i >= 0; i--) {
+      const d = decals[i];
+      d.life += dtF;
+      if (d.life >= d.ttl) { decals.splice(i, 1); continue; }
+      const fade = Math.min(1, (d.ttl - d.life) / (d.ttl * 0.3));
+      const p = worldToScreen(d.x, d.y);
+      if (p.x < -80 || p.x > vw + 80 || p.y < -80 || p.y > vh + 80) continue;
+      if (d.type === 'scorch') {
+        const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, d.size * TW2 * z);
+        g.addColorStop(0, 'rgba(18,14,10,' + (0.5 * fade) + ')');
+        g.addColorStop(0.7, 'rgba(24,20,14,' + (0.3 * fade) + ')');
+        g.addColorStop(1, 'rgba(24,20,14,0)');
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.ellipse(p.x, p.y, d.size * TW2 * z, d.size * TH2 * z, 0, 0, Math.PI * 2);
+        ctx.fill();
+      } else { // wreck: charred hull left behind
+        ctx.save();
+        ctx.translate(p.x, p.y);
+        ctx.scale(1, 0.5);
+        ctx.rotate(d.rot);
+        ctx.globalAlpha = fade;
+        ctx.fillStyle = '#26221c';
+        ctx.beginPath(); ctx.roundRect(-11 * z, -6 * z, 22 * z, 12 * z, 3 * z); ctx.fill();
+        ctx.fillStyle = '#3a332a';
+        ctx.beginPath(); ctx.roundRect(-7 * z, -4 * z, 11 * z, 8 * z, 2 * z); ctx.fill();
+        ctx.restore();
+        ctx.globalAlpha = 1;
+        /* smoldering */
+        if (Math.random() < 0.05 && d.life < d.ttl * 0.4) {
+          particles.push({
+            type: 'smoke', x: d.x, y: d.y, z: 0.2, vx: 0.1, vy: -0.05, vz: 0.55,
+            life: 0, ttl: 1.6, size: 2.4
+          });
         }
       }
     }
@@ -297,6 +407,14 @@ RTS.render = (function () {
               type: 'smoke', x: bd.x + (Math.random() - 0.5) * bd.w * 0.7,
               y: bd.y + (Math.random() - 0.5) * bd.h * 0.7, z: 0.8,
               vx: 0.1, vy: -0.1, vz: 0.8, life: 0, ttl: 1.4, size: 3.5
+            });
+          }
+          /* open flames once critically damaged */
+          if (bd.hp < bd.maxHp * 0.32 && Math.random() < 0.14) {
+            particles.push({
+              type: 'fire', x: bd.x + (Math.random() - 0.5) * bd.w * 0.6,
+              y: bd.y + (Math.random() - 0.5) * bd.h * 0.6, z: 0.5,
+              vx: 0, vy: 0, vz: 0.5, life: 0, ttl: 0.5 + Math.random() * 0.4, size: 2.6
             });
           }
         }
@@ -416,12 +534,16 @@ RTS.render = (function () {
         ctx.fillStyle = '#f2e2c0';
         ctx.fillRect(p.x - 2 * z, py - 2 * z, 4 * z, 4 * z);
         particles.push({ type: 'smoke', x: pr.x, y: pr.y, z: pr.z, vx: 0, vy: 0, vz: 0.15, life: 0, ttl: 0.35, size: 1.8 });
-      } else { // shell / arc
+      } else { // shell / arc / bomb
         ctx.fillStyle = '#2b2f36';
         ctx.beginPath();
-        ctx.arc(p.x, py, (pr.type === 'arc' ? 3 : 2.2) * z, 0, Math.PI * 2);
+        ctx.arc(p.x, py, (pr.type === 'bomb' ? 3.4 : pr.type === 'arc' ? 3 : 2.2) * z, 0, Math.PI * 2);
         ctx.fill();
-        if (pr.type === 'arc') {
+        if (pr.type === 'bomb') { // tail fins
+          ctx.strokeStyle = '#4a4f57'; ctx.lineWidth = 1.6 * z;
+          ctx.beginPath(); ctx.moveTo(p.x, py - 3 * z); ctx.lineTo(p.x, py - 6.5 * z); ctx.stroke();
+        }
+        if (pr.type === 'arc' || pr.type === 'bomb') {
           ctx.fillStyle = 'rgba(0,0,0,0.25)';
           ctx.beginPath();
           ctx.ellipse(p.x, p.y + 2, 3 * z, 1.5 * z, 0, 0, Math.PI * 2);
@@ -435,13 +557,14 @@ RTS.render = (function () {
     const z = camera.zoom;
     for (let i = particles.length - 1; i >= 0; i--) {
       const pt = particles[i];
+      if (pt.delay && pt.delay > 0) { pt.delay -= dtF; continue; }
       pt.life += dtF;
       if (pt.life >= pt.ttl) { particles.splice(i, 1); continue; }
       const f = pt.life / pt.ttl;
       pt.x += (pt.vx || 0) * dtF;
       pt.y += (pt.vy || 0) * dtF;
       pt.z += (pt.vz || 0) * dtF;
-      if (pt.vz !== undefined && pt.type === 'debris') pt.vz -= 9 * dtF;
+      if (pt.vz !== undefined && (pt.type === 'debris' || pt.type === 'dirt')) pt.vz -= 9 * dtF;
       const p = worldToScreen(pt.x, pt.y);
       const py = p.y - pt.z * TH * z;
       switch (pt.type) {
@@ -458,6 +581,44 @@ RTS.render = (function () {
         case 'flash': {
           ctx.fillStyle = 'rgba(255,240,180,' + (1 - f) + ')';
           ctx.beginPath(); ctx.arc(p.x, py, pt.size * z * (1 - f * 0.5), 0, Math.PI * 2); ctx.fill();
+          break;
+        }
+        case 'muzzleflash': {
+          /* elongated cone toward the firing direction */
+          const mdx = Math.cos(pt.dir), mdy = Math.sin(pt.dir) * 0.5;
+          const L = pt.size * z * (1 - f * 0.4);
+          ctx.fillStyle = 'rgba(255,236,170,' + (0.95 * (1 - f)) + ')';
+          ctx.beginPath();
+          ctx.moveTo(p.x + mdy * 3 * z, py - mdx * 3 * z * 0.5);
+          ctx.lineTo(p.x + mdx * L, py + mdy * L);
+          ctx.lineTo(p.x - mdy * 3 * z, py + mdx * 3 * z * 0.5);
+          ctx.closePath(); ctx.fill();
+          ctx.fillStyle = 'rgba(255,255,230,' + (1 - f) + ')';
+          ctx.beginPath(); ctx.arc(p.x, py, 2.6 * z * (1 - f), 0, Math.PI * 2); ctx.fill();
+          break;
+        }
+        case 'shock': {
+          /* fast expanding blast wave hugging the ground */
+          ctx.strokeStyle = 'rgba(255,235,200,' + (0.75 * (1 - f)) + ')';
+          ctx.lineWidth = 3.2 * z * (1 - f * 0.6);
+          ctx.beginPath();
+          ctx.ellipse(p.x, p.y, f * TW * pt.size * z, f * TH * pt.size * z, 0, 0, Math.PI * 2);
+          ctx.stroke();
+          break;
+        }
+        case 'fire': {
+          const fr = pt.size * z * (1 - f * 0.55);
+          const g2 = ctx.createRadialGradient(p.x, py, 0, p.x, py, fr * 2.2);
+          g2.addColorStop(0, 'rgba(255,230,140,' + (0.9 * (1 - f)) + ')');
+          g2.addColorStop(0.5, 'rgba(255,120,40,' + (0.6 * (1 - f)) + ')');
+          g2.addColorStop(1, 'rgba(180,40,10,0)');
+          ctx.fillStyle = g2;
+          ctx.beginPath(); ctx.arc(p.x, py, fr * 2.2, 0, Math.PI * 2); ctx.fill();
+          break;
+        }
+        case 'dirt': {
+          ctx.fillStyle = 'rgba(112,90,58,' + (0.8 * (1 - f)) + ')';
+          ctx.beginPath(); ctx.arc(p.x, py, pt.size * z * (0.7 + f * 0.5), 0, Math.PI * 2); ctx.fill();
           break;
         }
         case 'smoke': {
@@ -640,9 +801,16 @@ RTS.render = (function () {
     }
   }
 
+  function reset() {
+    particles = [];
+    decals = [];
+    shake = 0;
+  }
+
   return {
     init: init,
     render: render,
+    reset: reset,
     onEvent: onEvent,
     camera: camera,
     overlay: overlay,

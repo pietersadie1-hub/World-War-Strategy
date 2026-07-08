@@ -20,8 +20,24 @@
         <div class="res-chip" id="res-energy" title="Energy"><span class="res-ico ico-eng"></span><span class="res-val">0</span><span class="res-rate">+0</span></div>
         <div class="res-chip" id="res-water" title="Water"><span class="res-ico ico-wat"></span><span class="res-val">0</span><span class="res-rate">+0</span></div>
       </div>
+      <div id="intel-chip" title="War balance — click for details">
+        <span class="intel-swords">VS</span>
+        <div id="intel-bar"><div id="intel-bar-you"></div></div>
+      </div>
       <div id="clock-chip"><span id="daynight-ico">☀</span><span id="weather-ico"></span><span id="game-clock">00:00</span></div>
       <button id="btn-menu" class="hud-btn">☰</button>
+    </div>
+    <div id="intel-panel" class="hidden">
+      <h4>Battlefield Intel</h4>
+      <table>
+        <tr><th></th><th>You</th><th>Enemy</th></tr>
+        <tr><td>Military power</td><td id="ip-pow0">–</td><td id="ip-pow1">–</td></tr>
+        <tr><td>Units fielded</td><td id="ip-units0">–</td><td id="ip-units1">–</td></tr>
+        <tr><td>Buildings</td><td id="ip-bld0">–</td><td id="ip-bld1">–</td></tr>
+        <tr><td>Units destroyed</td><td id="ip-kill0">–</td><td id="ip-kill1">–</td></tr>
+        <tr><td>Buildings razed</td><td id="ip-raze0">–</td><td id="ip-raze1">–</td></tr>
+      </table>
+      <div id="ip-verdict"></div>
     </div>
 
     <div id="minimap-wrap">

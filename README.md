@@ -9,8 +9,9 @@ A browser-based real-time strategy game built with plain HTML5 Canvas, CSS and J
 - **Isometric world (~30°)** — procedurally generated maps with rivers, forests, mountains, mineral fields, a neutral town with a road grid, and a highway with bridges linking the two start zones.
 - **Base building** — HQ, Power Plants, Mineral Mines, Water Pumps, Barracks, War Factories, Airfields, Guard Turrets, and Hydro Dams (dams generate big energy *and* double as river crossings).
 - **Resource management** — three stockpiles: **minerals ◆, energy ⚡, water 💧**, each with live income rates. Running out of energy slows production and turret fire.
-- **Military production** — Engineers, Rifle Squads, Rocket Teams, Battle Tanks, Artillery, and Gunships (aircraft that ignore terrain).
-- **Combat** — projectiles, splash damage, damage bonuses vs buildings, screen shake, explosions, wreck smoke.
+- **Military production** — Engineers (hard hats included), Rifle Squads, Rocket Teams, Battle Tanks, Artillery, and a full air wing: Gunships, **Fighters** (interceptors with a big bonus vs aircraft) and **Strike Bombers** (dropped bombs with splash damage; ground targets only — as are artillery shells, so planes can only be shot down by direct-fire weapons and fighters).
+- **Combat** — projectiles, splash damage, damage bonuses vs buildings/air, directional muzzle flashes, shockwaves, fire, dirt and debris, staged secondary explosions when buildings collapse, lasting scorch craters and smoldering tank wrecks, screen shake.
+- **Battlefield intel** — a live blue-vs-red power-balance bar in the top HUD; click it for a full report (military power, units fielded, buildings, kills, structures razed and a verdict on how the war is going).
 - **Attack readiness / stances** — Guard, Assault, Hold, plus Patrol routes and attack-move.
 - **Strategic expansion** — pave roads (units move ~45 % faster on them), bridge rivers, dam rivers, and capture neutral town buildings with Engineers for bonus income.
 - **Fog of war** — unexplored black, explored-but-unseen dimmed, live vision from your units and buildings. Fog weather reduces sight range.

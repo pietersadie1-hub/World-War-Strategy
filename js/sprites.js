@@ -608,27 +608,85 @@ RTS.sprites = (function () {
     ctx.translate(cx, cy);
 
     if (type === 'worker' || type === 'infantry' || type === 'rocket') {
-      /* little soldier: shadow, legs, torso, helmet, weapon */
+      /* soldier: shadow, animated legs, uniform torso, arms, head with headgear */
       ctx.fillStyle = 'rgba(0,0,0,0.25)';
-      ctx.beginPath(); ctx.ellipse(0, 2, 6, 2.6, 0, 0, Math.PI * 2); ctx.fill();
-      const step = frame ? 1.6 : -1.6;
-      ctx.strokeStyle = '#2e3238'; ctx.lineWidth = 2.2;
+      ctx.beginPath(); ctx.ellipse(0, 2.5, 6.5, 2.8, 0, 0, Math.PI * 2); ctx.fill();
+      const step = frame ? 2 : -2;
+      /* legs with boots */
+      ctx.strokeStyle = '#2e3238'; ctx.lineWidth = 2.4; ctx.lineCap = 'round';
       ctx.beginPath();
-      ctx.moveTo(-1.5, -4); ctx.lineTo(-2.5 + step, 2);
-      ctx.moveTo(1.5, -4); ctx.lineTo(2.5 - step, 2);
+      ctx.moveTo(-1.6, -5); ctx.lineTo(-2.6 + step, 2);
+      ctx.moveTo(1.6, -5); ctx.lineTo(2.6 - step, 2);
       ctx.stroke();
-      ctx.fillStyle = type === 'worker' ? '#e8b64c' : pc.main; // engineers wear hi-vis
-      ctx.beginPath(); ctx.roundRect(-3.5, -12, 7, 9, 2); ctx.fill();
-      ctx.fillStyle = type === 'worker' ? '#f2d276' : pc.light;
-      ctx.beginPath(); ctx.arc(0, -14.5, 3.4, 0, Math.PI * 2); ctx.fill();
-      /* weapon / tool pointing toward facing */
-      ctx.strokeStyle = type === 'worker' ? '#7a5a30' : '#23262b';
-      ctx.lineWidth = type === 'rocket' ? 3 : 1.8;
-      const wx = Math.cos(ang) * 9, wy = Math.sin(ang) * 4.5;
-      ctx.beginPath(); ctx.moveTo(0, -9); ctx.lineTo(wx, -9 + wy); ctx.stroke();
-      if (type === 'rocket') {
-        ctx.fillStyle = '#3c424a';
-        ctx.fillRect(-5.5, -13.5, 3, 8); // launcher tube on back
+      ctx.fillStyle = '#1b1e22';
+      ctx.fillRect(-4.4 + step, 1, 3.4, 2); ctx.fillRect(1.2 - step, 1, 3.4, 2);
+      /* torso */
+      if (type === 'worker') {
+        ctx.fillStyle = '#e07b28'; // hi-vis overalls
+        ctx.beginPath(); ctx.roundRect(-4, -13, 8, 10, 2.4); ctx.fill();
+        ctx.fillStyle = '#f4d64a'; // reflective stripes
+        ctx.fillRect(-4, -10.4, 8, 1.6);
+        ctx.fillRect(-1, -13, 2, 10);
+        ctx.fillStyle = pc.main; // owner armband
+        ctx.fillRect(-4.6, -12.2, 2, 3);
+      } else {
+        ctx.fillStyle = shade(pc.main, -14);
+        ctx.beginPath(); ctx.roundRect(-4, -13, 8, 10, 2.4); ctx.fill();
+        ctx.fillStyle = shade(pc.main, 14); // chest plate
+        ctx.beginPath(); ctx.roundRect(-2.8, -12, 5.6, 5.4, 1.6); ctx.fill();
+        ctx.strokeStyle = '#23262b'; ctx.lineWidth = 1.2; // gear strap
+        ctx.beginPath(); ctx.moveTo(-3.6, -12.4); ctx.lineTo(3.6, -8); ctx.stroke();
+        ctx.fillStyle = '#4a4438'; // backpack edge
+        ctx.fillRect(-5.4, -11.8, 1.8, 5.6);
+      }
+      /* arms toward facing */
+      const awx = Math.cos(ang), awy = Math.sin(ang) * 0.5;
+      ctx.strokeStyle = type === 'worker' ? '#e07b28' : shade(pc.main, -22);
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(-2.5, -10.5); ctx.lineTo(awx * 5 - 1, -9.5 + awy * 5);
+      ctx.moveTo(2.5, -10.5); ctx.lineTo(awx * 5.5 + 1, -9.5 + awy * 5.5);
+      ctx.stroke();
+      /* head + skin */
+      ctx.fillStyle = '#e5b48c';
+      ctx.beginPath(); ctx.arc(0, -15.5, 3.1, 0, Math.PI * 2); ctx.fill();
+      if (type === 'worker') {
+        /* yellow hard hat with brim */
+        ctx.fillStyle = '#f2c93c';
+        ctx.beginPath(); ctx.arc(0, -16.3, 3.3, Math.PI, 0); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(0, -16.2, 4.6, 1.4, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#d9ae1f';
+        ctx.fillRect(-1, -19.3, 2, 3.2); // ridge
+      } else {
+        /* combat helmet in owner color */
+        ctx.fillStyle = shade(pc.dark, 26);
+        ctx.beginPath(); ctx.arc(0, -16, 3.6, Math.PI * 1.05, Math.PI * -0.05); ctx.fill();
+        ctx.fillStyle = shade(pc.dark, 8);
+        ctx.fillRect(-3.6, -16.2, 7.2, 1.5); // helmet rim
+        if (type === 'rocket') {
+          ctx.fillStyle = '#d8433a'; // goggle band
+          ctx.fillRect(-3.1, -15.4, 6.2, 1.3);
+        }
+      }
+      /* weapon */
+      const wx = Math.cos(ang) * 9.5, wy = Math.sin(ang) * 4.8;
+      if (type === 'worker') {
+        ctx.strokeStyle = '#7a5a30'; ctx.lineWidth = 1.8; // wrench/tool
+        ctx.beginPath(); ctx.moveTo(0, -9.5); ctx.lineTo(wx * 0.7, -9.5 + wy * 0.7); ctx.stroke();
+        ctx.fillStyle = '#9aa2ab';
+        ctx.beginPath(); ctx.arc(wx * 0.7, -9.5 + wy * 0.7, 1.6, 0, Math.PI * 2); ctx.fill();
+      } else if (type === 'rocket') {
+        /* launcher tube on the shoulder */
+        ctx.strokeStyle = '#3c424a'; ctx.lineWidth = 3.4;
+        ctx.beginPath(); ctx.moveTo(-wx * 0.45, -13 - wy * 0.45); ctx.lineTo(wx * 0.9, -13 + wy * 0.9); ctx.stroke();
+        ctx.strokeStyle = '#c8503c'; ctx.lineWidth = 3.4; // warhead tip
+        ctx.beginPath(); ctx.moveTo(wx * 0.78, -13 + wy * 0.78); ctx.lineTo(wx * 0.95, -13 + wy * 0.95); ctx.stroke();
+      } else {
+        /* rifle with stock */
+        ctx.strokeStyle = '#23262b'; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(-wx * 0.25, -9.5 - wy * 0.25); ctx.lineTo(wx, -9.5 + wy); ctx.stroke();
+        ctx.strokeStyle = '#6b4a2b'; ctx.lineWidth = 2.6;
+        ctx.beginPath(); ctx.moveTo(-wx * 0.28, -9.5 - wy * 0.28); ctx.lineTo(-wx * 0.05, -9.5 - wy * 0.05); ctx.stroke();
       }
     } else if (type === 'tank' || type === 'artillery') {
       ctx.fillStyle = 'rgba(0,0,0,0.28)';
@@ -679,6 +737,61 @@ RTS.sprites = (function () {
       ctx.stroke();
       ctx.fillStyle = '#12151a';
       ctx.beginPath(); ctx.arc(2, 0, 1.8, 0, Math.PI * 2); ctx.fill();
+    } else if (type === 'fighter') {
+      ctx.scale(1, 0.6);
+      ctx.rotate(ang);
+      /* delta-wing jet */
+      ctx.fillStyle = shade(pc.main, -6);
+      ctx.beginPath();
+      ctx.moveTo(16, 0);
+      ctx.lineTo(0, -3); ctx.lineTo(-8, -12); ctx.lineTo(-11, -10.5); ctx.lineTo(-8, -2.5);
+      ctx.lineTo(-13, -1.5); ctx.lineTo(-13, 1.5); ctx.lineTo(-8, 2.5);
+      ctx.lineTo(-11, 10.5); ctx.lineTo(-8, 12); ctx.lineTo(0, 3);
+      ctx.closePath(); ctx.fill();
+      /* fuselage highlight + canopy */
+      ctx.fillStyle = shade(pc.main, 20);
+      ctx.beginPath(); ctx.ellipse(2, 0, 10, 2.4, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#20242a';
+      ctx.beginPath(); ctx.ellipse(7, 0, 4, 2, 0, 0, Math.PI * 2); ctx.fill();
+      /* tail fin + wingtip stripes */
+      ctx.fillStyle = pc.light;
+      ctx.fillRect(-13, -1.2, 2.5, 2.4);
+      ctx.fillRect(-10.5, -12, 2, 2.5); ctx.fillRect(-10.5, 9.5, 2, 2.5);
+      /* afterburner flicker */
+      ctx.fillStyle = frame ? 'rgba(255,170,70,0.9)' : 'rgba(255,220,140,0.7)';
+      ctx.beginPath();
+      ctx.moveTo(-13.5, -1.2); ctx.lineTo(frame ? -19 : -17, 0); ctx.lineTo(-13.5, 1.2);
+      ctx.closePath(); ctx.fill();
+    } else if (type === 'bomber') {
+      ctx.scale(1, 0.6);
+      ctx.rotate(ang);
+      /* broad twin-prop bomber */
+      ctx.fillStyle = shade(pc.dark, 10);
+      ctx.beginPath(); // wings
+      ctx.moveTo(4, -1.5); ctx.lineTo(-2, -16); ctx.lineTo(-6.5, -16); ctx.lineTo(-6, -1.5);
+      ctx.lineTo(-6, 1.5); ctx.lineTo(-6.5, 16); ctx.lineTo(-2, 16); ctx.lineTo(4, 1.5);
+      ctx.closePath(); ctx.fill();
+      /* fuselage */
+      ctx.fillStyle = shade(pc.main, -4);
+      ctx.beginPath(); ctx.ellipse(0, 0, 15, 3.6, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = shade(pc.main, 18);
+      ctx.beginPath(); ctx.ellipse(3, -0.8, 10, 1.6, 0, 0, Math.PI * 2); ctx.fill();
+      /* nose glazing + tail */
+      ctx.fillStyle = '#20242a';
+      ctx.beginPath(); ctx.ellipse(12, 0, 3.4, 2.2, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = pc.light;
+      ctx.fillRect(-15.5, -4.5, 3, 9);
+      /* engines + spinning props (2 frames) */
+      ctx.fillStyle = '#2b2f35';
+      ctx.beginPath(); ctx.ellipse(0, -9, 4, 2.2, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(0, 9, 4, 2.2, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = 'rgba(220,228,238,0.8)'; ctx.lineWidth = 1.4;
+      for (const py of [-9, 9]) {
+        ctx.beginPath();
+        if (frame) { ctx.moveTo(4, py - 4); ctx.lineTo(4, py + 4); }
+        else { ctx.moveTo(1, py); ctx.lineTo(7, py); }
+        ctx.stroke();
+      }
     }
     ctx.restore();
     return c;
