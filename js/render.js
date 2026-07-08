@@ -368,8 +368,9 @@ RTS.render = (function () {
   }
 
   function drawBuilding(state, bd, z) {
+    const bVar = (bd.gx * 7 + bd.gy * 13) % 3; /* per-position look variant */
     const spr = bd.complete || bd.progress > 0.6
-      ? S.building(bd.type, bd.owner)
+      ? S.building(bd.type, bd.owner, bVar)
       : S.scaffold(bd.w, bd.h);
     const p = worldToScreen(bd.gx, bd.gy);
     const isSel = overlay.selection.indexOf(bd) >= 0;
@@ -378,7 +379,7 @@ RTS.render = (function () {
 
     if (!bd.complete) {
       /* construction: rise from the ground with a clip */
-      const full = S.building(bd.type, bd.owner);
+      const full = S.building(bd.type, bd.owner, bVar);
       const ph = full.c.height * z;
       const top = p.y - full.ay * z;
       ctx.save();
