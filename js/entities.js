@@ -161,7 +161,10 @@ RTS.entities = (function () {
       const wp = u.path[u.pathI];
       const dx = wp.x - u.x, dy = wp.y - u.y;
       const d = Math.hypot(dx, dy);
-      if (d < 0.02) { u.pathI++; continue; }
+      /* loose tolerance on intermediate waypoints — crowds shove units off
+         the exact line and demanding pixel-perfect hits caused stalls */
+      const isLast = u.pathI >= u.path.length - 1;
+      if (d < (isLast ? 0.05 : 0.3)) { u.pathI++; continue; }
       const step = Math.min(remaining, d);
       u.x += dx / d * step;
       u.y += dy / d * step;
@@ -172,6 +175,61 @@ RTS.entities = (function () {
     u.animT += dt * speed;
     if (!u.path || u.pathI >= u.path.length) { u.path = null; return true; }
     return false;
+  }
+
+  /* Traffic control. Detection is goal-progress based: a unit is stuck when
+     its distance to the goal stops improving — this also catches crowd
+     "ping-pong", where a unit bounces at full speed between its movement
+     step and the separation push without gaining an inch. Response ladder:
+     sidestep + repath a few times, then settle for "close enough". */
+  function stuckCheck(state, u, dt, goalX, goalY) {
+    if (!u.path) { u.bestGoalD = undefined; u.stuckT = 0; return null; }
+    if (goalX === undefined) {
+      const last = u.path[u.path.length - 1];
+      goalX = last.x; goalY = last.y;
+    }
+    const gd = U.dist(u.x, u.y, goalX, goalY);
+    if (u.bestGoalD === undefined || gd < u.bestGoalD - 0.22) {
+      u.bestGoalD = gd;
+      u.stuckT = 0;
+      /* good progress since the last stall earns the retry budget back —
+         a long trek through several slow chokepoints shouldn't give up */
+      if (u.tryRefD !== undefined && gd < u.tryRefD - 4) {
+        u.repathTries = 0;
+        u.tryRefD = undefined;
+      }
+      return null;
+    }
+    u.stuckT = (u.stuckT || 0) + dt;
+    if (u.stuckT < 1.6) return null;
+    u.stuckT = 0;
+    u.bestGoalD = undefined;
+    if (gd < 2.2) return 'arrived';
+    u.repathTries = (u.repathTries || 0) + 1;
+    u.tryRefD = gd;
+    if (u.repathTries > 4) { u.repathTries = 0; return 'arrived'; } // give up gracefully
+    return 'repath';
+  }
+
+  /* detour half a turn to the side of the jam, then head for the goal */
+  function sidestepRepath(state, u, gx, gy) {
+    const side = state.rand.next() < 0.5 ? 1 : -1;
+    const ang = Math.atan2(gy - u.y, gx - u.x) + side * (Math.PI / 2 + state.rand.range(-0.4, 0.4));
+    const r = 1.2 + state.rand.next() * 1.6;
+    const p = P.nearestPassable(state.map, u.x + Math.cos(ang) * r, u.y + Math.sin(ang) * r);
+    if (!setPath(state, u, gx, gy)) return false;
+    if (p) u.path.unshift({ x: p.x + 0.5, y: p.y + 0.5 });
+    return true;
+  }
+
+  function settle(u) {
+    u.order = { kind: 'none' };
+    u.path = null;
+    u.stuckT = 0;
+    u.repathTries = 0;
+    u.bestGoalD = undefined;
+    u.anchorX = u.x;
+    u.anchorY = u.y;
   }
 
   /* approach point on a building's perimeter */
@@ -312,9 +370,12 @@ RTS.entities = (function () {
       }
       case 'move': {
         if (stepAlongPath(state, u, dt)) {
-          u.order = { kind: 'none' };
-          u.anchorX = u.x; u.anchorY = u.y;
+          settle(u);
+          break;
         }
+        const sc = stuckCheck(state, u, dt, o.x, o.y);
+        if (sc === 'arrived') settle(u);
+        else if (sc === 'repath' && !sidestepRepath(state, u, o.x, o.y)) settle(u);
         break;
       }
       case 'attackmove': {
@@ -333,9 +394,12 @@ RTS.entities = (function () {
           u.autoTargetId = 0;
           if (!u.path) setPath(state, u, o.x, o.y);
           if (stepAlongPath(state, u, dt)) {
-            u.order = { kind: 'none' };
-            u.anchorX = u.x; u.anchorY = u.y;
+            settle(u);
+            break;
           }
+          const sc = stuckCheck(state, u, dt, o.x, o.y);
+          if (sc === 'arrived') settle(u);
+          else if (sc === 'repath' && !sidestepRepath(state, u, o.x, o.y)) settle(u);
         }
         break;
       }
@@ -365,6 +429,10 @@ RTS.entities = (function () {
           if (stepAlongPath(state, u, dt)) {
             o.leg = !o.leg;
             u.path = null;
+          } else {
+            const sc = stuckCheck(state, u, dt, goal.x, goal.y);
+            if (sc === 'arrived') { o.leg = !o.leg; u.path = null; }
+            else if (sc === 'repath') sidestepRepath(state, u, goal.x, goal.y);
           }
         }
         break;
@@ -472,10 +540,15 @@ RTS.entities = (function () {
           const d = Math.hypot(dx, dy);
           const min = 0.42;
           if (d < min && d > 0.0001) {
-            const push = (min - d) * 0.5;
+            /* moving units shoulder idle ones aside instead of stalling */
+            const aMoving = !!a.path, bMoving = !!b.path;
+            let ka = 0.5, kb = 0.5;
+            if (aMoving && !bMoving) { ka = 0.12; kb = 0.88; }
+            else if (!aMoving && bMoving) { ka = 0.88; kb = 0.12; }
+            const push = min - d;
             const nx = dx / d, ny = dy / d;
-            a.x -= nx * push; a.y -= ny * push;
-            b.x += nx * push; b.y += ny * push;
+            a.x -= nx * push * ka; a.y -= ny * push * ka;
+            b.x += nx * push * kb; b.y += ny * push * kb;
           } else if (d <= 0.0001) {
             a.x -= 0.03; b.x += 0.03;
           }

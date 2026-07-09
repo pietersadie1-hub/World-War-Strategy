@@ -32,17 +32,28 @@ RTS.input = (function () {
     window.addEventListener('mouseup', onMouseUp);
     canvas.addEventListener('wheel', onWheel, { passive: false });
     canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+    canvas.addEventListener('auxclick', function (e) { e.preventDefault(); });
     canvas.addEventListener('mouseenter', function () { mouseOver = true; });
     canvas.addEventListener('mouseleave', function () { mouseOver = false; });
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', function (e) { keys[e.code] = false; });
+    /* keyup events are lost when the window/tab loses focus mid-press,
+       leaving the camera scrolling forever — clear all held keys */
+    window.addEventListener('blur', clearKeys);
+    document.addEventListener('visibilitychange', function () {
+      if (document.hidden) clearKeys();
+    });
 
     canvas.addEventListener('touchstart', onTouchStart, { passive: false });
     canvas.addEventListener('touchmove', onTouchMove, { passive: false });
     canvas.addEventListener('touchend', onTouchEnd, { passive: false });
   }
 
-  function setEnabled(v) { enabled = v; }
+  function setEnabled(v) { enabled = v; if (!v) clearKeys(); }
+
+  function clearKeys() {
+    for (const k in keys) keys[k] = false;
+  }
 
   function state() { return RTS.game.state; }
   function sel() { return RTS.render.overlay.selection; }
@@ -234,9 +245,17 @@ RTS.input = (function () {
   }
 
   /* ---------------- mouse ---------------- */
+  let midPan = null; // middle-mouse drag panning
+
   function onMouseDown(e) {
     if (!enabled || !state()) return;
     mouseX = e.clientX; mouseY = e.clientY;
+    if (e.button === 1) {
+      e.preventDefault();
+      const cam = RTS.render.camera;
+      midPan = { x: e.clientX, y: e.clientY, camX: cam.x, camY: cam.y };
+      return;
+    }
     if (e.button === 0) {
       const ui = RTS.ui;
       if (ui.mode.kind === 'road') {
@@ -257,6 +276,15 @@ RTS.input = (function () {
   function onMouseMove(e) {
     mouseX = e.clientX; mouseY = e.clientY;
     if (!enabled || !state()) return;
+    if (midPan) {
+      const z = RTS.render.camera.zoom;
+      const dx = e.clientX - midPan.x, dy = e.clientY - midPan.y;
+      const wx = (dx / (C.TILE_W / 2) + dy / (C.TILE_H / 2)) / 2 / z;
+      const wy = (dy / (C.TILE_H / 2) - dx / (C.TILE_W / 2)) / 2 / z;
+      RTS.render.camera.x = midPan.camX - wx;
+      RTS.render.camera.y = midPan.camY - wy;
+      return;
+    }
     if (dragSel) {
       dragSel.x1 = e.clientX; dragSel.y1 = e.clientY;
       const x = Math.min(dragSel.x0, dragSel.x1), y = Math.min(dragSel.y0, dragSel.y1);
@@ -273,6 +301,7 @@ RTS.input = (function () {
 
   function onMouseUp(e) {
     if (!enabled || !state()) return;
+    if (e.button === 1) { midPan = null; return; }
     if (e.button !== 0) return;
     if (roadDrag) {
       const tiles = roadDrag.tiles.filter(function (t) { return t.cost >= 0; })

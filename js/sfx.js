@@ -1,14 +1,16 @@
 /* ============ sfx.js — synthesized sound effects (WebAudio, no assets) ============
    Gunfire, explosions, acknowledgements and alerts are generated with
-   oscillators and filtered noise. Volume falls off with distance from the
-   camera; a mute toggle persists in localStorage. */
+   oscillators and filtered noise, routed through a lowpass + compressor
+   master chain so the mix stays soft even in big battles. Sounds are
+   distance-attenuated, stereo-panned by screen position and pitch-varied
+   so repeated shots don't sound mechanical. Mute persists in localStorage. */
 window.RTS = window.RTS || {};
 
 RTS.sfx = (function () {
   'use strict';
 
   let ac = null;            // AudioContext, created on first user gesture
-  let master = null;
+  let master = null;        // gain -> lowpass -> compressor -> destination
   let muted = false;
   let noiseBuf = null;
   const lastPlay = {};      // throttling per sound name
@@ -25,8 +27,19 @@ RTS.sfx = (function () {
     try {
       ac = new AC();
       master = ac.createGain();
-      master.gain.value = muted ? 0 : 0.5;
-      master.connect(ac.destination);
+      master.gain.value = muted ? 0 : 0.45;
+      const soften = ac.createBiquadFilter();
+      soften.type = 'lowpass';
+      soften.frequency.value = 6500;   // shave the harsh top end
+      const comp = ac.createDynamicsCompressor();
+      comp.threshold.value = -22;
+      comp.knee.value = 18;
+      comp.ratio.value = 8;
+      comp.attack.value = 0.004;
+      comp.release.value = 0.2;
+      master.connect(soften);
+      soften.connect(comp);
+      comp.connect(ac.destination);
       /* 1s of white noise, reused by every noise-based sound */
       noiseBuf = ac.createBuffer(1, ac.sampleRate, ac.sampleRate);
       const d = noiseBuf.getChannelData(0);
@@ -44,101 +57,125 @@ RTS.sfx = (function () {
   function setMuted(m) {
     muted = m;
     try { localStorage.setItem('wws_muted', m ? '1' : '0'); } catch (e) {}
-    if (master) master.gain.value = m ? 0 : 0.5;
+    if (master) master.gain.value = m ? 0 : 0.45;
   }
   function isMuted() { return muted; }
 
-  function noise(dur, filterType, freq, q, vol, slideTo) {
-    const src = ac.createBufferSource();
-    src.buffer = noiseBuf;
-    const f = ac.createBiquadFilter();
-    f.type = filterType;
-    f.frequency.value = freq;
-    if (slideTo) f.frequency.exponentialRampToValueAtTime(slideTo, ac.currentTime + dur);
-    f.Q.value = q || 1;
+  /* shared output leg: gain envelope -> stereo panner -> master */
+  function leg(pan) {
     const g = ac.createGain();
-    g.gain.setValueAtTime(vol, ac.currentTime);
-    g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + dur);
-    src.connect(f); f.connect(g); g.connect(master);
-    src.start();
-    src.stop(ac.currentTime + dur);
+    let tail = g;
+    if (ac.createStereoPanner && pan) {
+      const p = ac.createStereoPanner();
+      p.pan.value = pan;
+      g.connect(p);
+      tail = p;
+    }
+    tail.connect(master);
+    return g;
   }
 
-  function tone(freq, dur, type, vol, slideTo, delay) {
+  function noise(dur, filterType, freq, q, vol, slideTo, pan, delay) {
+    const t0 = ac.currentTime + (delay || 0);
+    const src = ac.createBufferSource();
+    src.buffer = noiseBuf;
+    src.playbackRate.value = 0.9 + Math.random() * 0.2;
+    const f = ac.createBiquadFilter();
+    f.type = filterType;
+    f.frequency.setValueAtTime(freq, t0);
+    if (slideTo) f.frequency.exponentialRampToValueAtTime(slideTo, t0 + dur);
+    f.Q.value = q || 1;
+    const g = leg(pan);
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(vol, t0 + 0.012);
+    g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+    src.connect(f); f.connect(g);
+    src.start(t0);
+    src.stop(t0 + dur + 0.02);
+  }
+
+  function tone(freq, dur, type, vol, slideTo, delay, pan) {
     const o = ac.createOscillator();
-    o.type = type || 'square';
+    o.type = type || 'triangle';
     const t0 = ac.currentTime + (delay || 0);
     o.frequency.setValueAtTime(freq, t0);
     if (slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, t0 + dur);
-    const g = ac.createGain();
+    const g = leg(pan);
     g.gain.setValueAtTime(0.0001, t0);
-    g.gain.exponentialRampToValueAtTime(vol, t0 + 0.01);
+    g.gain.exponentialRampToValueAtTime(vol, t0 + 0.015);
     g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
-    o.connect(g); g.connect(master);
+    o.connect(g);
     o.start(t0);
     o.stop(t0 + dur + 0.02);
   }
 
-  /* throttled, distance-attenuated play */
+  /* throttled, distance-attenuated, panned play */
   function play(name, x, y) {
     if (muted || !ensureCtx()) return;
     const now = performance.now();
-    const minGap = { shot: 70, cannon: 110, rocket: 120, boom: 90, ack: 120 }[name] || 60;
+    const minGap = { shot: 80, cannon: 120, rocket: 140, boom: 100, ack: 130 }[name] || 70;
     if (lastPlay[name] && now - lastPlay[name] < minGap) return;
     lastPlay[name] = now;
 
-    let vol = 1;
+    let vol = 1, pan = 0;
     if (x !== undefined && RTS.render) {
       const cam = RTS.render.camera;
       const d = Math.hypot(x - cam.x, y - cam.y);
       vol = Math.max(0, 1 - d / 34);
       if (vol <= 0.03) return;
+      const sp = RTS.render.worldToScreen(x, y);
+      const vw = RTS.render.viewSize.w || 1;
+      pan = Math.max(-0.75, Math.min(0.75, (sp.x / vw) * 1.6 - 0.8));
     }
+    const pv = 0.92 + Math.random() * 0.16; // pitch variation
 
     switch (name) {
       case 'shot':
-        noise(0.09, 'highpass', 1800, 1, 0.5 * vol);
+        noise(0.08, 'bandpass', 1600 * pv, 2.2, 0.34 * vol, 500, pan);
+        tone(300 * pv, 0.045, 'triangle', 0.12 * vol, 130, 0, pan);
         break;
       case 'cannon':
-        noise(0.22, 'lowpass', 420, 1, 0.9 * vol, 90);
-        tone(95, 0.14, 'sine', 0.5 * vol, 42);
+        noise(0.26, 'lowpass', 500 * pv, 0.8, 0.7 * vol, 80, pan);
+        tone(110 * pv, 0.18, 'sine', 0.5 * vol, 40, 0, pan);
         break;
       case 'rocket':
-        noise(0.4, 'bandpass', 900, 2, 0.55 * vol, 2400);
+        noise(0.38, 'bandpass', 700 * pv, 1.6, 0.4 * vol, 2000, pan);
         break;
       case 'boom':
-        noise(0.6, 'lowpass', 300, 0.8, 1.1 * vol, 55);
-        tone(70, 0.5, 'sine', 0.7 * vol, 30);
+        noise(0.7, 'lowpass', 260 * pv, 0.7, 0.9 * vol, 45, pan);
+        tone(75 * pv, 0.55, 'sine', 0.65 * vol, 26, 0, pan);
+        noise(0.25, 'bandpass', 900, 1, 0.2 * vol, 300, pan);
         break;
       case 'bigboom':
-        noise(1.1, 'lowpass', 260, 0.8, 1.3 * vol, 40);
-        tone(58, 0.9, 'sine', 0.9 * vol, 24);
-        noise(0.5, 'highpass', 2400, 1, 0.3 * vol);
+        noise(1.3, 'lowpass', 220 * pv, 0.7, 1.1 * vol, 34, pan);
+        tone(60 * pv, 1.0, 'sine', 0.85 * vol, 22, 0, pan);
+        noise(0.8, 'lowpass', 160, 0.7, 0.5 * vol, 40, pan, 0.18); // delayed rumble
+        noise(0.3, 'bandpass', 1400, 1, 0.16 * vol, 400, pan);
         break;
       case 'ack':
-        tone(880, 0.05, 'square', 0.16);
-        tone(1320, 0.06, 'square', 0.14, 0, 0.055);
+        tone(700, 0.05, 'sine', 0.12);
+        tone(1050, 0.07, 'sine', 0.1, 0, 0.055);
         break;
       case 'ready':
-        tone(660, 0.09, 'triangle', 0.3);
-        tone(990, 0.14, 'triangle', 0.3, 0, 0.1);
+        tone(620, 0.1, 'triangle', 0.22);
+        tone(930, 0.16, 'triangle', 0.2, 0, 0.11);
         break;
       case 'built':
-        tone(520, 0.1, 'triangle', 0.3);
-        tone(780, 0.1, 'triangle', 0.3, 0, 0.11);
-        tone(1040, 0.16, 'triangle', 0.3, 0, 0.22);
+        tone(520, 0.11, 'triangle', 0.22);
+        tone(780, 0.11, 'triangle', 0.2, 0, 0.12);
+        tone(1040, 0.2, 'triangle', 0.18, 0, 0.24);
         break;
       case 'alert':
-        tone(620, 0.16, 'sawtooth', 0.35, 470);
-        tone(620, 0.16, 'sawtooth', 0.35, 470, 0.22);
+        tone(560, 0.2, 'triangle', 0.4, 420);
+        tone(560, 0.2, 'triangle', 0.4, 420, 0.27);
         break;
       case 'error':
-        tone(180, 0.15, 'square', 0.25, 120);
+        tone(200, 0.16, 'triangle', 0.24, 130);
         break;
       case 'capture':
-        tone(440, 0.1, 'triangle', 0.3);
-        tone(660, 0.1, 'triangle', 0.3, 0, 0.11);
-        tone(880, 0.18, 'triangle', 0.3, 0, 0.22);
+        tone(440, 0.11, 'triangle', 0.22);
+        tone(660, 0.11, 'triangle', 0.2, 0, 0.12);
+        tone(880, 0.2, 'triangle', 0.18, 0, 0.24);
         break;
     }
   }

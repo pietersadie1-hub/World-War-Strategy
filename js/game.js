@@ -275,7 +275,13 @@ RTS.game = (function () {
   function forUnits(ids, owner, fn) {
     for (const id of ids) {
       const u = state.byId[id];
-      if (u && !u.dead && u.kind === 'unit' && u.owner === owner) fn(u);
+      if (u && !u.dead && u.kind === 'unit' && u.owner === owner) {
+        /* fresh orders wipe the traffic-control state */
+        u.stuckT = 0;
+        u.repathTries = 0;
+        u.bestGoalD = undefined;
+        fn(u);
+      }
     }
   }
 

@@ -59,7 +59,7 @@ Both clients run the same fixed-step simulation from a shared seed; only command
 | Double-click unit | Select all of that type on screen |
 | Right click | Context order: move / attack / capture / repair / set rally |
 | Mouse wheel, pinch | Zoom |
-| Arrow keys / W, edge pan, drag (touch) | Pan camera |
+| Arrow keys / W, edge pan, middle-mouse drag, drag (touch) | Pan camera |
 | **A** | Attack-move mode |
 | **P** | Patrol mode |
 | **S** | Stop |
