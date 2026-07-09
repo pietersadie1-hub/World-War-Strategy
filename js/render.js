@@ -67,6 +67,15 @@ RTS.render = (function () {
   /* ---------------- events -> effects ---------------- */
   let decals = []; // persistent battle scars: scorch marks, vehicle wrecks
 
+  /* click-order feedback pulse: green = move, red = attack, gold = support */
+  const MARKER_COLS = { move: '110,230,140', attack: '240,90,70', support: '255,215,94' };
+  function orderMarker(x, y, kind) {
+    particles.push({
+      type: 'marker', x: x, y: y, z: 0, life: 0, ttl: 0.7,
+      col: MARKER_COLS[kind] || MARKER_COLS.move
+    });
+  }
+
   function addDecal(x, y, size, type) {
     decals.push({ x: x, y: y, size: size, type: type, life: 0, ttl: type === 'wreck' ? 34 : 22, rot: Math.random() * Math.PI });
     if (decals.length > 70) decals.shift();
@@ -399,6 +408,15 @@ RTS.render = (function () {
       drawBar(bd, bd.progress, '#57c268', z, 0);
     } else {
       ctx.drawImage(spr.c, p.x - spr.ax * z, p.y - spr.ay * z, spr.c.width * z, spr.c.height * z);
+      /* ambient industry: working smokestacks puff away */
+      const stacks = CHIMNEYS[bd.type];
+      if (stacks && Math.random() < 0.05) {
+        const sk = stacks[(Math.random() * stacks.length) | 0];
+        particles.push({
+          type: 'smoke', x: bd.gx + sk[0], y: bd.gy + sk[1], z: sk[2],
+          vx: 0.25, vy: -0.12, vz: 0.55, life: 0, ttl: 1.6 + Math.random(), size: 2.2
+        });
+      }
       if (bd.hp < bd.maxHp) {
         drawBar(bd, bd.hp / bd.maxHp, hpColor(bd.hp / bd.maxHp), z, 0);
         if (bd.hp < bd.maxHp * 0.5) {
@@ -439,6 +457,12 @@ RTS.render = (function () {
       }
     }
   }
+
+  /* smokestack tips per building type: [gx offset, gy offset, z height] */
+  const CHIMNEYS = {
+    power: [[1.68, 0.5, 1.5], [1.68, 1.28, 1.5]],
+    factory: [[2.75, 0.35, 1.7]]
+  };
 
   function drawFootprintRing(bd, z, rgb) {
     const p0 = worldToScreen(bd.gx, bd.gy);
@@ -643,6 +667,20 @@ RTS.render = (function () {
           ctx.stroke();
           break;
         }
+        case 'marker': {
+          /* order pulse: ring collapsing onto a center dot */
+          const mr = (1 - f) * 16 * z + 3;
+          ctx.strokeStyle = 'rgba(' + pt.col + ',' + (0.9 - f * 0.5) + ')';
+          ctx.lineWidth = 1.8 * z;
+          ctx.beginPath();
+          ctx.ellipse(p.x, p.y, mr, mr * 0.5, 0, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.fillStyle = 'rgba(' + pt.col + ',' + (1 - f) + ')';
+          ctx.beginPath();
+          ctx.ellipse(p.x, p.y, 2.4 * z, 1.4 * z, 0, 0, Math.PI * 2);
+          ctx.fill();
+          break;
+        }
       }
     }
   }
@@ -813,6 +851,7 @@ RTS.render = (function () {
     render: render,
     reset: reset,
     onEvent: onEvent,
+    orderMarker: orderMarker,
     camera: camera,
     overlay: overlay,
     worldToScreen: worldToScreen,

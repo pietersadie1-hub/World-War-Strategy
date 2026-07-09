@@ -72,8 +72,29 @@ RTS.entities = (function () {
     delete state.byId[b.id];
   }
 
+  /* "call for help": nearby idle friendlies converge on whoever is shooting
+     at one of ours. This is what makes a guarded base actually defend itself. */
+  function alertNearby(state, target, attacker) {
+    if (!attacker || attacker.dead) return;
+    if (target.alertT !== undefined && state.time - target.alertT < 2) return;
+    target.alertT = state.time;
+    for (const u of state.units) {
+      if (u.dead || u.owner !== target.owner || u.id === target.id) continue;
+      const def = C.UNITS[u.type];
+      if (!def.weapon || u.stance === 'hold') continue;
+      if (u.order.kind !== 'none' && u.order.kind !== 'patrol') continue;
+      if (u.autoTargetId) continue;
+      if (!canHit(def.weapon, attacker)) continue;
+      if (U.dist(u.x, u.y, target.x, target.y) > 12) continue;
+      u.autoTargetId = attacker.id;
+      /* re-anchor at the victim so the leash lets them fight there */
+      u.anchorX = target.x;
+      u.anchorY = target.y;
+    }
+  }
+
   /* ---------------- damage ---------------- */
-  function damage(state, target, amount, srcOwner, weapon) {
+  function damage(state, target, amount, srcOwner, weapon, srcId) {
     if (!target || target.dead) return;
     if (weapon && weapon.bonusVsBuilding && target.kind === 'building') {
       amount *= weapon.bonusVsBuilding;
@@ -84,6 +105,12 @@ RTS.entities = (function () {
     target.hp -= amount;
     target.lastHitT = state.time;
     target.lastHitBy = srcOwner;
+    if (target.kind === 'building' && target.owner >= 0 && target.hp > 0) {
+      RTS.events.push({ t: 'attacked', x: target.x, y: target.y, owner: target.owner });
+    }
+    if (target.owner >= 0 && srcId !== undefined) {
+      alertNearby(state, target, state.byId[srcId]);
+    }
     if (target.hp <= 0) {
       target.hp = 0;
       if (target.kind === 'unit') {
@@ -206,7 +233,7 @@ RTS.entities = (function () {
     const proj = {
       id: state.nextId++, type: weapon.projectile,
       x: u.x, y: u.y, z: u.z ? 0.9 : (u.kind === 'building' ? 0.5 : 0.35),
-      sx: u.x, sy: u.y,
+      sx: u.x, sy: u.y, srcId: u.id,
       targetId: target.id, tx: target.x, ty: target.y,
       dmg: weapon.dmg, splash: weapon.splash || 0, weapon: weapon,
       owner: u.owner, t: 0,
@@ -238,14 +265,14 @@ RTS.entities = (function () {
           for (const e of state.units) {
             if (e.dead || e.owner === p.owner) continue;
             if (!canHit(p.weapon, e)) continue;
-            if (U.dist(e.x, e.y, p.tx, p.ty) <= p.splash) damage(state, e, p.dmg, p.owner, p.weapon);
+            if (U.dist(e.x, e.y, p.tx, p.ty) <= p.splash) damage(state, e, p.dmg, p.owner, p.weapon, p.srcId);
           }
           for (const e of state.buildings) {
             if (e.dead || e.owner === p.owner || e.owner === -1) continue;
-            if (distToEnt({ x: p.tx, y: p.ty }, e) <= p.splash) damage(state, e, p.dmg, p.owner, p.weapon);
+            if (distToEnt({ x: p.tx, y: p.ty }, e) <= p.splash) damage(state, e, p.dmg, p.owner, p.weapon, p.srcId);
           }
         } else if (tgt && !tgt.dead) {
-          damage(state, tgt, p.dmg, p.owner, p.weapon);
+          damage(state, tgt, p.dmg, p.owner, p.weapon, p.srcId);
           RTS.events.push({ t: 'hit', x: p.tx, y: p.ty, kind: p.type, z: tgt.z || 0.35 });
         }
       }

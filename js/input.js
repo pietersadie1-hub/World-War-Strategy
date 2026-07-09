@@ -109,18 +109,26 @@ RTS.input = (function () {
       if (pc === 'attack') {
         if (ent && ent.owner !== st.localPlayer && ent.owner !== -1 && ids.length) {
           RTS.game.issue({ c: 'attack', p: st.localPlayer, ids: ids, target: ent.id });
+          ack('attack', ent.x, ent.y);
         } else if (ids.length) {
           RTS.game.issue({ c: 'attackmove', p: st.localPlayer, ids: ids, x: w.x, y: w.y });
+          ack('attack', w.x, w.y);
         }
       } else if (pc === 'patrol' && ids.length) {
         RTS.game.issue({ c: 'patrol', p: st.localPlayer, ids: ids, x: w.x, y: w.y });
+        ack('move', w.x, w.y);
       } else if (pc === 'capture' && ent && ent.kind === 'building' && ent.owner === -1) {
         RTS.game.issue({ c: 'capture', p: st.localPlayer, ids: ids, target: ent.id });
+        ack('support', ent.x, ent.y);
       } else if (pc === 'repair' && ent && ent.kind === 'building' && ent.owner === st.localPlayer) {
         RTS.game.issue({ c: 'repair', p: st.localPlayer, ids: ids, target: ent.id });
+        ack('support', ent.x, ent.y);
       } else if (pc === 'rally') {
         const b = sel().find(function (e) { return e.kind === 'building'; });
-        if (b) RTS.game.issue({ c: 'rally', p: st.localPlayer, b: b.id, x: w.x, y: w.y });
+        if (b) {
+          RTS.game.issue({ c: 'rally', p: st.localPlayer, b: b.id, x: w.x, y: w.y });
+          ack('support', w.x, w.y);
+        }
       }
       ui.pendingCmd = null;
       RTS.ui.refreshPanel();
@@ -143,6 +151,7 @@ RTS.input = (function () {
       const ids = mySelectedUnitIds();
       if (ids.length) {
         RTS.game.issue({ c: 'move', p: st.localPlayer, ids: ids, x: w.x, y: w.y });
+        ack('move', w.x, w.y);
       } else {
         RTS.render.overlay.selection = [];
         RTS.ui.onSelectionChanged();
@@ -181,6 +190,7 @@ RTS.input = (function () {
       });
       if (b && C.BUILDINGS[b.type].trains) {
         RTS.game.issue({ c: 'rally', p: st.localPlayer, b: b.id, x: w.x, y: w.y });
+        ack('support', w.x, w.y);
         RTS.ui.toast('Rally point set');
       }
       return;
@@ -193,23 +203,34 @@ RTS.input = (function () {
         const hasWorker = sel().some(function (e) { return e.kind === 'unit' && e.type === 'worker' && e.owner === st2.localPlayer; });
         if (hasWorker && ent.kind === 'building') {
           RTS.game.issue({ c: 'capture', p: st.localPlayer, ids: ids, target: ent.id });
+          ack('support', ent.x, ent.y);
           return;
         }
         RTS.game.issue({ c: 'move', p: st.localPlayer, ids: ids, x: w.x, y: w.y });
+        ack('move', w.x, w.y);
         return;
       }
       RTS.game.issue({ c: 'attack', p: st.localPlayer, ids: ids, target: ent.id });
+      ack('attack', ent.x, ent.y);
       return;
     }
     if (ent && ent.kind === 'building' && ent.owner === st.localPlayer) {
       const hasWorker = sel().some(function (e) { return e.kind === 'unit' && e.type === 'worker'; });
       if (hasWorker && (!ent.complete || ent.hp < ent.maxHp)) {
         RTS.game.issue({ c: 'repair', p: st.localPlayer, ids: ids, target: ent.id });
+        ack('support', ent.x, ent.y);
         RTS.ui.toast(ent.complete ? 'Repairing…' : 'Engineer assisting construction');
         return;
       }
     }
     RTS.game.issue({ c: 'move', p: st.localPlayer, ids: ids, x: w.x, y: w.y });
+    ack('move', w.x, w.y);
+  }
+
+  /* order feedback: audio ack + a marker pulse where the order landed */
+  function ack(kind, x, y) {
+    RTS.sfx.play('ack');
+    RTS.render.orderMarker(x, y, kind);
   }
 
   /* ---------------- mouse ---------------- */
@@ -443,6 +464,7 @@ RTS.input = (function () {
           if (ids.length) {
             const w = RTS.render.screenToWorld(mouseX, mouseY);
             RTS.game.issue({ c: 'attackmove', p: state().localPlayer, ids: ids, x: w.x, y: w.y });
+            ack('attack', w.x, w.y);
             RTS.ui.toast('Attack-move');
             if (navigator.vibrate) navigator.vibrate(30);
             touchPan = null;
@@ -533,6 +555,59 @@ RTS.input = (function () {
       cam.y += (my - mx) * sp * 0.5;
     }
     updateGhost();
+    updateCursorHint(dt);
+  }
+
+  /* contextual hint following the mouse: what would a click/right-click do? */
+  let hintT = 0;
+  function updateCursorHint(dt) {
+    hintT -= dt;
+    if (hintT > 0) return;
+    hintT = 0.09;
+    const hintEl = document.getElementById('cursor-hint');
+    const st = state();
+    if (!st || !mouseOver || ('ontouchstart' in window)) { hideHint(hintEl); return; }
+    const ui = RTS.ui;
+    let text = null, cursor = '';
+
+    if (ui.mode.kind === 'build') { hideHint(hintEl); return; }
+    if (ui.mode.kind === 'road') { text = 'Drag to pave road'; }
+    else {
+      const selUnits = sel().filter(function (e) {
+        return !e.dead && e.kind === 'unit' && e.owner === st.localPlayer;
+      });
+      const hasWorker = selUnits.some(function (e) { return e.type === 'worker'; });
+      const hasCombat = selUnits.some(function (e) { return C.UNITS[e.type].weapon; });
+      const ent = pickEntity(mouseX, mouseY);
+      if (ui.pendingCmd) {
+        text = { attack: '⊕ Attack', patrol: '⇄ Patrol', capture: '⚑ Capture',
+                 repair: '🔧 Repair', rally: '⚑ Rally' }[ui.pendingCmd];
+        cursor = 'crosshair';
+      } else if (ent && selUnits.length) {
+        if (ent.owner !== st.localPlayer && ent.owner !== -1 && hasCombat) {
+          text = '⊕ Attack'; cursor = 'crosshair';
+        } else if (ent.owner === -1 && ent.kind === 'building' && hasWorker) {
+          text = '⚑ Capture';
+        } else if (ent.owner === st.localPlayer && ent.kind === 'building' && hasWorker) {
+          if (!ent.complete) text = '🔧 Assist build';
+          else if (ent.hp < ent.maxHp) text = '🔧 Repair';
+        }
+      }
+    }
+    if (text) {
+      hintEl.textContent = text + '  (right-click)';
+      if (RTS.ui.pendingCmd || RTS.ui.mode.kind === 'road') hintEl.textContent = text;
+      hintEl.style.display = 'block';
+      hintEl.style.left = (mouseX + 16) + 'px';
+      hintEl.style.top = (mouseY + 18) + 'px';
+      canvas.style.cursor = cursor || 'default';
+    } else {
+      hideHint(hintEl);
+    }
+  }
+  function hideHint(el) {
+    if (el) el.style.display = 'none';
+    if (canvas) canvas.style.cursor = 'default';
   }
 
   return { init: init, setEnabled: setEnabled, update: update };

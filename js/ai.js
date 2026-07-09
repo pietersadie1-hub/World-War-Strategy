@@ -9,7 +9,7 @@ RTS.ai = (function () {
     state.ai = {
       p: playerIdx,
       thinkT: 2,
-      waveT: C.DIFFICULTY[state.difficulty].wave * 0.7, // first wave a bit early-ish
+      waveT: C.DIFFICULTY[state.difficulty].firstWave, // guaranteed peace at the start
       captureT: 30,
       rallying: false,
       waveNo: 0
@@ -215,6 +215,10 @@ RTS.ai = (function () {
     }
     ai.waveT = diff.wave;
     ai.waveNo++;
+    /* send an escalating detachment, not the whole army — the rest stays
+       home on defense (and keeps early waves survivable) */
+    const sendCount = Math.min(ready.length, Math.round((5 + ai.waveNo * 3) * diff.waveSize));
+    ready.length = sendCount;
     /* target: enemy hq, or nearest enemy building */
     const enemy = state.players[1 - ai.p];
     let target = null;

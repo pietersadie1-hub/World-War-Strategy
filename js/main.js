@@ -19,6 +19,10 @@ RTS.main = (function () {
     RTS.ui.init();
     RTS.input.init($('game-canvas'));
     wireMenus();
+    /* browsers gate audio behind a user gesture */
+    const unlock = function () { RTS.sfx.unlock(); };
+    window.addEventListener('pointerdown', unlock, { passive: true });
+    window.addEventListener('keydown', unlock);
     lastT = performance.now();
     rafId = requestAnimationFrame(loop);
   }
@@ -48,6 +52,7 @@ RTS.main = (function () {
       for (const e of RTS.events) {
         RTS.render.onEvent(e);
         RTS.ui.onEvent(e);
+        RTS.sfx.onEvent(e);
         if (e.t === 'gameover') onGameOver(e);
       }
       RTS.events.length = 0;

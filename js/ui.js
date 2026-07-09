@@ -42,6 +42,17 @@ RTS.ui = (function () {
       els.intelPanel.classList.toggle('hidden');
     });
 
+    const muteBtn = $('btn-mute');
+    function syncMute() {
+      muteBtn.textContent = RTS.sfx.isMuted() ? '✕' : '♪';
+      muteBtn.style.opacity = RTS.sfx.isMuted() ? 0.55 : 1;
+    }
+    muteBtn.addEventListener('click', function () {
+      RTS.sfx.setMuted(!RTS.sfx.isMuted());
+      syncMute();
+    });
+    syncMute();
+
     /* panel tabs */
     document.querySelectorAll('.ptab').forEach(function (tab) {
       tab.addEventListener('click', function () {
@@ -85,6 +96,7 @@ RTS.ui = (function () {
     mode.kind = 'none'; mode.type = null;
     pendingCmd = null;
     mmTerrain = null;
+    pings.length = 0;
     RTS.render.reset();
     RTS.render.overlay.selection = [];
     RTS.render.overlay.ghost = null;
@@ -485,6 +497,20 @@ RTS.ui = (function () {
       }
     }
 
+    /* attack alert pings: pulsing red rings */
+    const nowP = performance.now();
+    for (let i = pings.length - 1; i >= 0; i--) {
+      const pg = pings[i];
+      const age = (nowP - pg.t0) / 1000;
+      if (age > 4) { pings.splice(i, 1); continue; }
+      const pulse = (age * 2.5) % 1;
+      minimapCtx.strokeStyle = 'rgba(255,70,50,' + (0.95 - pulse * 0.7) + ')';
+      minimapCtx.lineWidth = 1.5;
+      minimapCtx.beginPath();
+      minimapCtx.arc(pg.x * sx, pg.y * sy, 2 + pulse * 7, 0, Math.PI * 2);
+      minimapCtx.stroke();
+    }
+
     /* viewport polygon */
     const vs = RTS.render.viewSize;
     const pts = [
@@ -518,9 +544,22 @@ RTS.ui = (function () {
   }
 
   let lastNoFunds = 0;
+  let lastAttackToast = 0;
+  const pings = []; /* minimap alert blips: {x, y, t0} */
+
   function onEvent(e) {
     const state = RTS.game.state;
     switch (e.t) {
+      case 'attacked':
+        if (state && e.owner === state.localPlayer) {
+          pings.push({ x: e.x, y: e.y, t0: performance.now() });
+          if (pings.length > 8) pings.shift();
+          if (performance.now() - lastAttackToast > 15000) {
+            lastAttackToast = performance.now();
+            toast('⚠ Our base is under attack!', true);
+          }
+        }
+        break;
       case 'nofunds':
         if (performance.now() - lastNoFunds > 1500) {
           lastNoFunds = performance.now();

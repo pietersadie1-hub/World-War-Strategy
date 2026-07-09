@@ -149,7 +149,11 @@ RTS.config = (function () {
   };
 
   const ECON = {
-    startRes: { m: 420, e: 160, w: 110 },
+    startRes: { m: 650, e: 260, w: 220 },
+    /* pre-built base + starting force so the early game is about expanding,
+       not scrambling (Red Alert style) */
+    startBuildings: ['power', 'mine', 'pump', 'barracks', 'factory'],
+    startUnits: { worker: 5, infantry: 10 },
     roadCostPerTile: 6,       // minerals
     bridgeCostPerTile: 30,    // road over river/water
     buildRadius: 11,          // must build within N tiles of an own building
@@ -160,9 +164,10 @@ RTS.config = (function () {
   };
 
   const DIFFICULTY = {
-    easy:   { income: 0.8, wave: 150, waveSize: 0.7, name: 'Easy' },
-    normal: { income: 1.0, wave: 115, waveSize: 1.0, name: 'Normal' },
-    hard:   { income: 1.35, wave: 85, waveSize: 1.45, name: 'Hard' }
+    /* firstWave: seconds of peace before the AI's first assault */
+    easy:   { income: 0.65, wave: 190, waveSize: 0.5, firstWave: 300, name: 'Easy' },
+    normal: { income: 1.0, wave: 130, waveSize: 1.0, firstWave: 200, name: 'Normal' },
+    hard:   { income: 1.35, wave: 90, waveSize: 1.45, firstWave: 130, name: 'Hard' }
   };
 
   const DAY_LENGTH = 190;     // seconds for a full day/night cycle

@@ -52,13 +52,18 @@ RTS.game = (function () {
       });
     }
 
-    /* starting bases */
+    /* starting bases: HQ + a working economy and production line */
     for (let i = 0; i < 2; i++) {
       const s = gen.starts[i];
       E.placeBuilding(state, i, 'hq', s.x - 1, s.y - 1, true);
-      for (let k = 0; k < 2; k++) {
-        E.spawnUnit(state, i, 'worker', s.x + 2.5 + k * 0.7, s.y + 2.5);
-        E.spawnUnit(state, i, 'infantry', s.x - 2.5 + k * 0.7, s.y + 2.5);
+      placeStartingBase(state, i, s);
+      const su = C.ECON.startUnits;
+      let n = 0;
+      for (let k = 0; k < (su.worker || 0); k++) {
+        spawnStartUnit(state, i, 'worker', s.x - 3 + k * 1.1, s.y + 3.2);
+      }
+      for (let k = 0; k < (su.infantry || 0); k++) {
+        spawnStartUnit(state, i, 'infantry', s.x - 4 + (k % 5) * 1.1, s.y + 4.4 + Math.floor(k / 5) * 1.0);
       }
     }
     /* neutral town */
@@ -76,6 +81,59 @@ RTS.game = (function () {
     if (!opts.mp) RTS.ai.init(state, 1);
     computeFog(state, true);
     return state;
+  }
+
+  /* pre-build the economy around a start position; deterministic scan order
+     so multiplayer clients agree. Mines snap onto nearby mineral fields. */
+  function placeStartingBase(st, owner, s) {
+    for (const type of C.ECON.startBuildings) {
+      const spot = type === 'mine'
+        ? findStartMineSpot(st, owner, s)
+        : findStartSpot(st, owner, type, s);
+      if (spot) {
+        E.placeBuilding(st, owner, type, spot.x, spot.y, true);
+      } else if (type === 'pump') {
+        /* no shoreline near this start — compensate with stockpiled water */
+        st.players[owner].res.w += 200;
+      } else if (type === 'mine') {
+        st.players[owner].res.m += 250;
+      }
+    }
+  }
+
+  function findStartSpot(st, owner, type, s) {
+    for (let r = 3; r <= 12; r++) {
+      for (let dy = -r; dy <= r; dy++) {
+        for (let dx = -r; dx <= r; dx++) {
+          if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+          const x = s.x + dx, y = s.y + dy;
+          if (canPlace(st, owner, type, x, y, true)) return { x: x, y: y };
+        }
+      }
+    }
+    return null;
+  }
+
+  function findStartMineSpot(st, owner, s) {
+    const map = st.map;
+    let best = null, bestD = Infinity;
+    for (let y = Math.max(0, s.y - 12); y <= Math.min(map.h - 2, s.y + 12); y++) {
+      for (let x = Math.max(0, s.x - 12); x <= Math.min(map.w - 2, s.x + 12); x++) {
+        if (!map.deposit[y * map.w + x]) continue;
+        for (const o of [[-1, -1], [0, -1], [-1, 0], [0, 0]]) {
+          if (canPlace(st, owner, 'mine', x + o[0], y + o[1], true)) {
+            const d = Math.abs(x - s.x) + Math.abs(y - s.y);
+            if (d < bestD) { bestD = d; best = { x: x + o[0], y: y + o[1] }; }
+          }
+        }
+      }
+    }
+    return best;
+  }
+
+  function spawnStartUnit(st, owner, type, x, y) {
+    const p = P.nearestPassable(st.map, Math.round(x), Math.round(y));
+    if (p) E.spawnUnit(st, owner, type, p.x + 0.5, p.y + 0.5);
   }
 
   /* ---------------- command bus ----------------
