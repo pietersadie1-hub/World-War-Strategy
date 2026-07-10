@@ -27,16 +27,19 @@ A browser-based real-time strategy game built with plain HTML5 Canvas, CSS and J
 
 ## Run it
 
-It's a static site — serve the folder and open it:
+**Easiest — play online:** https://pietersadie1-hub.github.io/World-War-Strategy/ (deployed automatically by GitHub Actions from this branch; if the link 404s, enable it once under repo **Settings → Pages → Source: GitHub Actions**, then re-run the "Deploy game to GitHub Pages" workflow).
+
+**Or open it locally, no tools needed:** download/clone the repo and **double-click `index.html`** — the game has no build step and no external assets, so it runs straight off the disk in any modern browser.
+
+**Or serve the folder** (recommended for development):
 
 ```bash
-# any static server works
 npx serve .
 # or
 python3 -m http.server 8080
 ```
 
-Then open http://localhost:8080 (or the printed URL) in a modern browser.
+Then open http://localhost:8080 (or the printed URL).
 
 ## Multiplayer (beta)
 
