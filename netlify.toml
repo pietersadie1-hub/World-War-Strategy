@@ -1,0 +1,6 @@
+# Netlify deployment config — the game is a plain static site.
+# In Netlify: "Add new site" -> "Import an existing project" -> pick this
+# repo and branch; no build command is needed.
+[build]
+  publish = "."
+  command = "echo 'static site - nothing to build'"
