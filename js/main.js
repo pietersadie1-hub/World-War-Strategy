@@ -37,12 +37,12 @@ RTS.main = (function () {
     if (running && !paused) {
       accumulator += dtF;
       let steps = 0;
-      while (accumulator >= C.SIM_DT && steps < 6) {
+      while (accumulator >= C.SIM_DT && steps < 4) {
         RTS.game.tick();
         accumulator -= C.SIM_DT;
         steps++;
       }
-      if (steps === 6) accumulator = 0; // give up catching up, stay smooth
+      if (steps === 4) accumulator = 0; // give up catching up, stay smooth
       RTS.input.update(dtF);
       RTS.ui.update(dtF);
     }

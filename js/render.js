@@ -33,7 +33,8 @@ RTS.render = (function () {
   }
 
   function resize() {
-    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    /* cap the backing resolution — full 2x retina fill-rate tanks weak GPUs */
+    dpr = Math.min(window.devicePixelRatio || 1, 1.5);
     vw = window.innerWidth; vh = window.innerHeight;
     canvas.width = vw * dpr; canvas.height = vh * dpr;
     fxCanvas.width = vw * dpr; fxCanvas.height = vh * dpr;
@@ -123,6 +124,9 @@ RTS.render = (function () {
           life: 0, ttl: 0.7, size: 3
         });
       }
+    } else if (e.t === 'roads') {
+      const st = RTS.game.state;
+      if (st) invalidateTiles(st, e.tiles);
     } else if (e.t === 'capture') {
       particles.push({ type: 'ring', x: e.x, y: e.y, z: 0, life: 0, ttl: 0.8, size: 1.6, col: '120,220,140' });
     } else if (e.t === 'complete') {
@@ -195,7 +199,7 @@ RTS.render = (function () {
     for (let i = 0; i < map.w * map.h; i++) {
       const o = i * 4;
       d[o] = 4; d[o + 1] = 7; d[o + 2] = 12;
-      d[o + 3] = fog.explored[i] ? (fog.visible[i] ? 0 : 120) : 252;
+      d[o + 3] = fog.explored[i] ? (fog.visible[i] ? 0 : 120) : 255;
     }
     fogCtx.putImageData(img, 0, 0);
   }
@@ -253,32 +257,98 @@ RTS.render = (function () {
     };
   }
 
-  function drawTerrain(state) {
+  /* ---------------- terrain atlas ----------------
+     The whole map is pre-rendered once into a single big canvas; each frame
+     is then ONE cropped blit instead of thousands of per-tile drawImage
+     calls. Road changes repaint just the affected tiles. */
+  let atlas = null, atlasMap = null, atlasOX = 0, atlasOY = 0;
+
+  function paintTileBase(actx, state, gx, gy) {
     const map = state.map;
-    const b = visibleTileBounds(map);
-    const z = camera.zoom;
-    const dw = (TW + 2) * z, dh = (TH + 2) * z;
-    for (let gy = b.y0; gy <= b.y1; gy++) {
-      for (let gx = b.x0; gx <= b.x1; gx++) {
-        const i = gy * map.w + gx;
-        if (!state.fog.explored[i]) continue;
-        const t = map.terrain[i];
-        const v = (gx * 7 + gy * 13) % 3;
-        const frame = (t === T.WATER || t === T.RIVER) ? waterFrame : 0;
-        const p = worldToScreen(gx, gy); // top vertex of the tile diamond
-        const sx = p.x - TW2 * z - z, sy = p.y - z;
-        ctx.drawImage(S.tile(t, v, frame), sx, sy, dw, dh);
-        const r = map.road[i];
-        if (r) {
-          let mask = 0;
-          if (gx + 1 < map.w && map.road[i + 1]) mask |= 1;
-          if (gx - 1 >= 0 && map.road[i - 1]) mask |= 2;
-          if (gy + 1 < map.h && map.road[i + map.w]) mask |= 4;
-          if (gy - 1 >= 0 && map.road[i - map.w]) mask |= 8;
-          if (r !== 3) ctx.drawImage(S.road(mask, r), sx, sy, dw, dh);
+    const i = gy * map.w + gx;
+    const ax = (gx - gy) * TW2 + atlasOX - TW2 - 1;
+    const ay = (gx + gy) * TH2 + atlasOY - 1;
+    const t = map.terrain[i];
+    const v = (gx * 7 + gy * 13) % 3;
+    actx.drawImage(S.tile(t, v, 0), ax, ay);
+    const r = map.road[i];
+    if (r && r !== 3) {
+      let mask = 0;
+      if (gx + 1 < map.w && map.road[i + 1]) mask |= 1;
+      if (gx - 1 >= 0 && map.road[i - 1]) mask |= 2;
+      if (gy + 1 < map.h && map.road[i + map.w]) mask |= 4;
+      if (gy - 1 >= 0 && map.road[i - map.w]) mask |= 8;
+      actx.drawImage(S.road(mask, r), ax, ay);
+    }
+    if (map.deposit[i]) actx.drawImage(S.deposit((gx * 3 + gy) % 5), ax, ay);
+  }
+
+  function ensureAtlas(state) {
+    if (atlas && atlasMap === state.map) return;
+    const map = state.map;
+    atlasMap = map;
+    atlasOX = map.h * TW2 + 2;
+    atlasOY = 2;
+    atlas = document.createElement('canvas');
+    atlas.width = (map.w + map.h) * TW2 + 4;
+    atlas.height = (map.w + map.h) * TH2 + TH + 6;
+    const actx = atlas.getContext('2d');
+    actx.fillStyle = '#0d1420';
+    actx.fillRect(0, 0, atlas.width, atlas.height);
+    for (let gy = 0; gy < map.h; gy++) {
+      for (let gx = 0; gx < map.w; gx++) paintTileBase(actx, state, gx, gy);
+    }
+  }
+
+  function invalidateTiles(state, tiles) {
+    if (!atlas || atlasMap !== state.map) return;
+    const actx = atlas.getContext('2d');
+    const done = {};
+    for (const t of tiles) {
+      /* neighbors too — their road connection masks changed */
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const x = t[0] + dx, y = t[1] + dy;
+          if (x < 0 || y < 0 || x >= state.map.w || y >= state.map.h) continue;
+          const k = y * state.map.w + x;
+          if (done[k]) continue;
+          done[k] = 1;
+          paintTileBase(actx, state, x, y);
         }
-        if (map.deposit[i]) {
-          ctx.drawImage(S.deposit((gx * 3 + gy) % 5), sx, sy, dw, dh);
+      }
+    }
+  }
+
+  function drawTerrain(state) {
+    ensureAtlas(state);
+    const z = camera.zoom;
+    /* source rect in atlas space that maps onto the viewport */
+    let sx = atlasOX + (camera.x - camera.y) * TW2 - vw / (2 * z);
+    let sy = atlasOY + (camera.x + camera.y) * TH2 - vh / (2 * z);
+    let sw = vw / z, sh = vh / z;
+    let dx = 0, dy = 0, dwid = vw, dhei = vh;
+    if (sx < 0) { dx = -sx * z; dwid += sx * z; sw += sx; sx = 0; }
+    if (sy < 0) { dy = -sy * z; dhei += sy * z; sh += sy; sy = 0; }
+    if (sx + sw > atlas.width) { const over = sx + sw - atlas.width; sw -= over; dwid -= over * z; }
+    if (sy + sh > atlas.height) { const over = sy + sh - atlas.height; sh -= over; dhei -= over * z; }
+    if (sw > 0 && sh > 0) ctx.drawImage(atlas, sx, sy, sw, sh, dx, dy, dwid, dhei);
+
+    /* animated water: overlay the shimmering frames only when zoomed in
+       enough to notice (the atlas holds frame 0) */
+    if (z >= 0.65 && waterFrame !== 0) {
+      const map = state.map;
+      const b = visibleTileBounds(map);
+      const dw = (TW + 2) * z, dh = (TH + 2) * z;
+      for (let gy = b.y0; gy <= b.y1; gy++) {
+        for (let gx = b.x0; gx <= b.x1; gx++) {
+          const i = gy * map.w + gx;
+          const t = map.terrain[i];
+          if (t !== T.WATER && t !== T.RIVER) continue;
+          if (!state.fog.explored[i]) continue;
+          if (map.road[i]) continue; // bridges cover the water
+          const p = worldToScreen(gx, gy);
+          ctx.drawImage(S.tile(t, (gx * 7 + gy * 13) % 3, waterFrame),
+            p.x - TW2 * z - z, p.y - z, dw, dh);
         }
       }
     }
@@ -294,14 +364,10 @@ RTS.render = (function () {
       const p = worldToScreen(d.x, d.y);
       if (p.x < -80 || p.x > vw + 80 || p.y < -80 || p.y > vh + 80) continue;
       if (d.type === 'scorch') {
-        const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, d.size * TW2 * z);
-        g.addColorStop(0, 'rgba(18,14,10,' + (0.5 * fade) + ')');
-        g.addColorStop(0.7, 'rgba(24,20,14,' + (0.3 * fade) + ')');
-        g.addColorStop(1, 'rgba(24,20,14,0)');
-        ctx.fillStyle = g;
-        ctx.beginPath();
-        ctx.ellipse(p.x, p.y, d.size * TW2 * z, d.size * TH2 * z, 0, 0, Math.PI * 2);
-        ctx.fill();
+        const rx = d.size * TW2 * z, ry = d.size * TH2 * z;
+        ctx.globalAlpha = fade;
+        ctx.drawImage(fxSprite('scorch'), p.x - rx, p.y - ry, rx * 2, ry * 2);
+        ctx.globalAlpha = 1;
       } else { // wreck: charred hull left behind
         ctx.save();
         ctx.translate(p.x, p.y);
@@ -595,12 +661,9 @@ RTS.render = (function () {
       switch (pt.type) {
         case 'boom': {
           const r = (6 + f * 26 * pt.size) * z;
-          const g = ctx.createRadialGradient(p.x, py, 0, p.x, py, r);
-          g.addColorStop(0, 'rgba(255,245,200,' + (1 - f) + ')');
-          g.addColorStop(0.4, 'rgba(255,160,60,' + (0.9 - f * 0.9) + ')');
-          g.addColorStop(1, 'rgba(120,40,10,0)');
-          ctx.fillStyle = g;
-          ctx.beginPath(); ctx.arc(p.x, py, r, 0, Math.PI * 2); ctx.fill();
+          ctx.globalAlpha = 1 - f;
+          ctx.drawImage(fxSprite('boom'), p.x - r, py - r, r * 2, r * 2);
+          ctx.globalAlpha = 1;
           break;
         }
         case 'flash': {
@@ -632,13 +695,10 @@ RTS.render = (function () {
           break;
         }
         case 'fire': {
-          const fr = pt.size * z * (1 - f * 0.55);
-          const g2 = ctx.createRadialGradient(p.x, py, 0, p.x, py, fr * 2.2);
-          g2.addColorStop(0, 'rgba(255,230,140,' + (0.9 * (1 - f)) + ')');
-          g2.addColorStop(0.5, 'rgba(255,120,40,' + (0.6 * (1 - f)) + ')');
-          g2.addColorStop(1, 'rgba(180,40,10,0)');
-          ctx.fillStyle = g2;
-          ctx.beginPath(); ctx.arc(p.x, py, fr * 2.2, 0, Math.PI * 2); ctx.fill();
+          const fr = pt.size * z * (1 - f * 0.55) * 2.2;
+          ctx.globalAlpha = 1 - f;
+          ctx.drawImage(fxSprite('fire'), p.x - fr, py - fr, fr * 2, fr * 2);
+          ctx.globalAlpha = 1;
           break;
         }
         case 'dirt': {
@@ -776,24 +836,67 @@ RTS.render = (function () {
       ctx.fillStyle = 'rgba(255,120,40,' + (duskGlow * 0.13) + ')';
       ctx.fillRect(0, 0, vw, vh);
     }
-    /* window lights & headlights at night */
+    /* window lights & headlights at night (cached glow sprite, culled) */
     if (nightness > 0.25) {
       const z = camera.zoom;
       ctx.save();
       ctx.globalCompositeOperation = 'lighter';
-      const a = (nightness - 0.25) * 0.5;
+      ctx.globalAlpha = (nightness - 0.25) * 0.5;
+      const glow = getGlowSprite();
       for (const b of RTS.game.state.buildings) {
         if (b.dead || !b.complete || !entVisible(state, b)) continue;
         const p = worldToScreen(b.x, b.y);
         const r = (b.w + b.h) * 14 * z;
-        const g = ctx.createRadialGradient(p.x, p.y - 8 * z, 0, p.x, p.y - 8 * z, r);
-        g.addColorStop(0, 'rgba(255,214,140,' + a + ')');
-        g.addColorStop(1, 'rgba(255,214,140,0)');
-        ctx.fillStyle = g;
-        ctx.beginPath(); ctx.arc(p.x, p.y - 8 * z, r, 0, Math.PI * 2); ctx.fill();
+        if (p.x < -r || p.x > vw + r || p.y < -r || p.y > vh + r) continue;
+        ctx.drawImage(glow, p.x - r, p.y - 8 * z - r, r * 2, r * 2);
       }
+      ctx.globalAlpha = 1;
       ctx.restore();
     }
+  }
+
+  /* pre-rendered radial-gradient sprites — building gradients per particle
+     per frame was a major frame killer in big battles */
+  const fxSprites = {};
+  function fxSprite(name) {
+    if (fxSprites[name]) return fxSprites[name];
+    const c = document.createElement('canvas');
+    c.width = c.height = 96;
+    const g = c.getContext('2d');
+    let grad;
+    if (name === 'boom') {
+      grad = g.createRadialGradient(48, 48, 0, 48, 48, 48);
+      grad.addColorStop(0, 'rgba(255,245,200,1)');
+      grad.addColorStop(0.4, 'rgba(255,160,60,0.9)');
+      grad.addColorStop(1, 'rgba(120,40,10,0)');
+    } else if (name === 'fire') {
+      grad = g.createRadialGradient(48, 48, 0, 48, 48, 48);
+      grad.addColorStop(0, 'rgba(255,230,140,0.95)');
+      grad.addColorStop(0.5, 'rgba(255,120,40,0.6)');
+      grad.addColorStop(1, 'rgba(180,40,10,0)');
+    } else { // 'scorch'
+      grad = g.createRadialGradient(48, 48, 0, 48, 48, 48);
+      grad.addColorStop(0, 'rgba(18,14,10,0.55)');
+      grad.addColorStop(0.7, 'rgba(24,20,14,0.32)');
+      grad.addColorStop(1, 'rgba(24,20,14,0)');
+    }
+    g.fillStyle = grad;
+    g.fillRect(0, 0, 96, 96);
+    return (fxSprites[name] = c);
+  }
+
+  let glowSprite = null;
+  function getGlowSprite() {
+    if (glowSprite) return glowSprite;
+    glowSprite = document.createElement('canvas');
+    glowSprite.width = glowSprite.height = 128;
+    const g = glowSprite.getContext('2d');
+    const grad = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+    grad.addColorStop(0, 'rgba(255,214,140,1)');
+    grad.addColorStop(1, 'rgba(255,214,140,0)');
+    g.fillStyle = grad;
+    g.fillRect(0, 0, 128, 128);
+    return glowSprite;
   }
 
   /* ---------------- weather ---------------- */

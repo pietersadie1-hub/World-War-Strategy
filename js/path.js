@@ -28,7 +28,9 @@ RTS.path = (function () {
   /* Generic A* over an arbitrary cost function — used by both unit movement
      and map-gen highway routing. costFn(x,y) returns entry cost (Infinity = wall). */
   function astarGeneric(w, h, costFn, sx, sy, tx, ty, maxExpand) {
-    maxExpand = maxExpand || 9000;
+    /* default must cover every cell — a cap below w*h makes legitimately
+       reachable cross-map paths fail on maps with large blocked regions */
+    maxExpand = maxExpand || (w * h + 16);
     if (sx === tx && sy === ty) return [];
     const size = w * h;
     const g = new Float64Array(size).fill(Infinity);
@@ -157,6 +159,7 @@ RTS.path = (function () {
     findPath: findPath,
     tileCost: tileCost,
     passable: passable,
-    nearestPassable: nearestPassable
+    nearestPassable: nearestPassable,
+    losClear: losClear
   };
 })();

@@ -445,9 +445,14 @@ RTS.ui = (function () {
   MM_COLORS[C.T.FOREST] = '#3d6b2e'; MM_COLORS[C.T.HILL] = '#75815b';
   MM_COLORS[C.T.MOUNTAIN] = '#787d86';
 
+  let mmFrameT = 0;
   function drawMinimap(state, dt) {
+    /* full redraw at ~5 Hz — every frame was a hidden FPS killer */
+    mmFrameT -= dt;
+    if (mmFrameT > 0) return;
+    mmFrameT = 0.2;
     const map = state.map;
-    mmTerrainT -= dt;
+    mmTerrainT -= 0.2;
     if (!mmTerrain || mmTerrainT <= 0) {
       mmTerrainT = 2;
       mmTerrain = mmTerrain || document.createElement('canvas');

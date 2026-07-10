@@ -171,13 +171,16 @@ RTS.game = (function () {
         break;
       }
       case 'road': {
+        const paved = [];
         for (const t of cmd.tiles) {
           const cost = roadTileCost(state, t[0], t[1]);
           if (cost < 0) continue;
           if (player.res.m < cost) break;
           player.res.m -= cost;
           RTS.map.layRoadTile(state.map, t[0], t[1]);
+          paved.push(t);
         }
+        if (paved.length) RTS.events.push({ t: 'roads', tiles: paved });
         break;
       }
       case 'train': {

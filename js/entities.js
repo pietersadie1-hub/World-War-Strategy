@@ -189,35 +189,38 @@ RTS.entities = (function () {
       goalX = last.x; goalY = last.y;
     }
     const gd = U.dist(u.x, u.y, goalX, goalY);
-    if (u.bestGoalD === undefined || gd < u.bestGoalD - 0.22) {
+    if (u.bestGoalD === undefined || gd < u.bestGoalD - 0.15) {
       u.bestGoalD = gd;
       u.stuckT = 0;
       /* good progress since the last stall earns the retry budget back —
          a long trek through several slow chokepoints shouldn't give up */
-      if (u.tryRefD !== undefined && gd < u.tryRefD - 4) {
+      if (u.tryRefD !== undefined && gd < u.tryRefD - 2.5) {
         u.repathTries = 0;
         u.tryRefD = undefined;
       }
       return null;
     }
+    /* patient window: queues at bridges/passes creep slowly — wait it out */
     u.stuckT = (u.stuckT || 0) + dt;
-    if (u.stuckT < 1.6) return null;
+    if (u.stuckT < 2.0) return null;
     u.stuckT = 0;
     u.bestGoalD = undefined;
     if (gd < 2.2) return 'arrived';
     u.repathTries = (u.repathTries || 0) + 1;
     u.tryRefD = gd;
-    if (u.repathTries > 4) { u.repathTries = 0; return 'arrived'; } // give up gracefully
+    if (u.repathTries > 8) { u.repathTries = 0; return 'arrived'; } // give up gracefully
     return 'repath';
   }
 
-  /* detour half a turn to the side of the jam, then head for the goal */
+  /* First stalls get a plain repath (the queue usually just moved on);
+     persistent jams add a sidestep detour before heading for the goal. */
   function sidestepRepath(state, u, gx, gy) {
+    if (!setPath(state, u, gx, gy)) return false;
+    if ((u.repathTries || 0) <= 2) return true;
     const side = state.rand.next() < 0.5 ? 1 : -1;
     const ang = Math.atan2(gy - u.y, gx - u.x) + side * (Math.PI / 2 + state.rand.range(-0.4, 0.4));
     const r = 1.2 + state.rand.next() * 1.6;
     const p = P.nearestPassable(state.map, u.x + Math.cos(ang) * r, u.y + Math.sin(ang) * r);
-    if (!setPath(state, u, gx, gy)) return false;
     if (p) u.path.unshift({ x: p.x + 0.5, y: p.y + 0.5 });
     return true;
   }
@@ -511,10 +514,14 @@ RTS.entities = (function () {
     } else {
       u.repath -= dt;
       if (!u.path || u.repath <= 0) {
-        u.repath = 0.8;
-        setPath(state, u, tgt.x, tgt.y);
-        if (u.path && u.path.length > 0) {
-          /* stop pathing once inside range — trim happens naturally */
+        u.repath = 0.7 + (u.id % 5) * 0.06; // stagger repaths across the army
+        /* cheap chase: nearby visible targets don't need full A* — this is
+           the hottest sim path in large battles */
+        if (d < 7 && (C.UNITS[u.type].air || P.losClear(state.map, u.x, u.y, tgt.x, tgt.y))) {
+          u.path = [{ x: tgt.x, y: tgt.y }];
+          u.pathI = 0;
+        } else {
+          setPath(state, u, tgt.x, tgt.y);
         }
       }
       stepAlongPath(state, u, dt);
